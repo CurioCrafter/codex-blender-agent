@@ -1,0 +1,42 @@
+# Python cache and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local virtual environments
+.venv/
+venv/
+env/
+
+# Packaging and build outputs
+build/
+dist/
+*.egg-info/
+*.zip
+app-server-schema.json
+
+# Blender backups and temporary files
+*.blend1
+*.blend2
+*.tmp
+
+# Local runtime data
+ai_assets.db
+ai_assets.db-shm
+ai_assets.db-wal
+visual_reviews/
+*.log
+
+# Local editor/project settings
+.idea/
+.vscode/
+.DS_Store
+
+# Environment files
+.env
+.env.*

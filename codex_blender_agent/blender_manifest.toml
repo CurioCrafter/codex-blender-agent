@@ -1,0 +1,22 @@
+schema_version = "1.0.0"
+id = "codex_blender_agent"
+version = "0.15.3"
+name = "Codex Blender Agent"
+tagline = "Chat-first AI game creator for Blender"
+maintainer = "CurioCrafter"
+type = "add-on"
+blender_version_min = "4.5.0"
+license = [
+  "SPDX:MIT",
+]
+
+[permissions]
+network = "Talk to Codex app-server and OpenAI services"
+files = "Read attachments and import or export Blender assets"
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  ".*",
+  "*.zip",
+]
