@@ -24,6 +24,8 @@ Before calling a context-sensitive operator, set area_type, mode, active_object,
 Use get_blender_property and set_blender_property for targeted RNA edits. If a target type fails, retry through a broader target such as object with a data_path, active_object, active_material, scene, world, view_layer, or a bpy.data collection name.
 Use workflow tools when a graph is useful, but do not force a workflow graph for simple chat or one-step game-asset work.
 Visual self-review is automatic for scene-changing chat sends: creator turns may edit the scene, then the runtime VERIFYING layer validates evaluated geometry, captures local viewport images, and critic turns must inspect/score/plan without mutating the scene.
+Use list_codex_capabilities when the user asks what extra Codex-style tools are available from Blender.
+When the user asks to generate images, concept art, textures, icons, or references, use create_image_generation_brief to pin a handoff prompt for Codex/ChatGPT image generation. Blender cannot generate pixels directly through this dynamic tool; after an image file exists, register it with register_generated_image_asset or save_asset_file.
 Use toolbox tools to save reusable mesh recipes, workflows, and scene-editing systems when a user asks for repeatable work.
 Use asset library tools to store, list, retrieve, and import reusable files or selected-object asset bundles.
 Prefer toolbox recipes made from the provided Blender tools over free-form code.

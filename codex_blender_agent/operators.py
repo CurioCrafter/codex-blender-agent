@@ -66,6 +66,7 @@ def _sync_dashboard_collections(window_manager: bpy.types.WindowManager) -> None
         ("start_chat_tutorial", "Chat Tutorial", "codex_blender_agent.start_chat_tutorial", "", "Start a chat-guided tutorial."),
         ("ai_setup_workflow", "AI Setup Workflow", "codex_blender_agent.ai_setup_workflow", "", "Create an AI-managed unconnected workflow starter."),
         ("create_game_asset_from_prompt", "Create Game Asset", "codex_blender_agent.create_game_asset_from_prompt", "", "Route the prompt through the game asset fast lane."),
+        ("create_image_generation_brief", "Image Generation Brief", "codex_blender_agent.create_image_generation_brief", "", "Create a pinned handoff prompt for Codex/ChatGPT image generation."),
         ("send_prompt_from_text", "Send Draft", "codex_blender_agent.send_prompt_from_text", "", "Send the multiline Codex Prompt Draft text."),
         ("classify_prompt", "Classify Prompt", "codex_blender_agent.classify_prompt", "", "Classify the next prompt before sending or card creation."),
         ("send_prompt_literal", "Run Draft Script", "codex_blender_agent.send_prompt_literal", "", "Blender Run Script route for Codex Prompt Draft."),
@@ -1680,6 +1681,50 @@ class CODEXBLENDERAGENT_OT_create_game_asset_from_prompt(Operator):
         return {"FINISHED"}
 
 
+class CODEXBLENDERAGENT_OT_create_image_generation_brief(Operator):
+    bl_idname = "codex_blender_agent.create_image_generation_brief"
+    bl_label = "Create Image Generation Brief"
+    bl_description = "Turn the current prompt into a pinned Codex/ChatGPT image-generation handoff brief."
+
+    purpose: EnumProperty(
+        name="Purpose",
+        items=[
+            ("concept", "Concept", "Concept art or visual direction."),
+            ("texture", "Texture", "Texture or material reference."),
+            ("reference", "Reference", "Reference image for Blender modeling."),
+            ("ui", "UI/Icon", "Game UI, icon, or HUD artwork."),
+            ("skybox", "Skybox", "Skybox or environment reference."),
+        ],
+        default="concept",
+    )
+    prompt: StringProperty(name="Prompt", default="")
+
+    def execute(self, context: bpy.types.Context):
+        window_manager = context.window_manager
+        prompt = (self.prompt or window_manager.codex_blender_prompt or read_prompt_draft()).strip()
+        if not prompt:
+            self.report({"WARNING"}, "Enter a prompt or write in Codex Prompt Draft first.")
+            return {"CANCELLED"}
+        try:
+            brief = get_runtime().create_image_generation_brief(
+                context,
+                prompt=prompt,
+                purpose=self.purpose,
+                style=getattr(window_manager, "codex_blender_game_style", ""),
+                target_engine=getattr(window_manager, "codex_blender_target_engine", ""),
+                reference_paths=[item.path for item in window_manager.codex_blender_attachments],
+            )
+            window_manager.codex_blender_activity = f"Image generation brief created: {brief.get('title', 'image brief')}"
+            _open_text_payload(context, "Codex Image Generation Brief", brief)
+            _sync_dashboard_collections(window_manager)
+            self.report({"INFO"}, window_manager.codex_blender_activity)
+        except Exception as exc:
+            window_manager.codex_blender_error = str(exc)
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
 class CODEXBLENDERAGENT_OT_apply_last_ai_result(Operator):
     bl_idname = "codex_blender_agent.apply_last_ai_result"
     bl_label = "Apply Last AI Result"
@@ -2973,6 +3018,7 @@ CLASSES = (
     CODEXBLENDERAGENT_OT_ai_setup_workflow,
     CODEXBLENDERAGENT_OT_create_blank_workflow_tree,
     CODEXBLENDERAGENT_OT_create_game_asset_from_prompt,
+    CODEXBLENDERAGENT_OT_create_image_generation_brief,
     CODEXBLENDERAGENT_OT_apply_last_ai_result,
     CODEXBLENDERAGENT_OT_set_game_creator_mode,
     CODEXBLENDERAGENT_OT_set_execution_friction,

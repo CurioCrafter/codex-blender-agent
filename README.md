@@ -38,6 +38,10 @@ V9 turns the add-on into a real multi-workspace studio. The opt-in workspace sui
 
 V10 is the workflow-graph hardening pass. The goal is to turn `Workflow` into a typed orchestration surface with explicit inputs, assistant calls, approvals, preview-only nodes, reusable recipes, and safe patch proposals. `Workflow` should orchestrate Blender work; it should not replace Geometry Nodes, Shader Nodes, or the Compositor.
 
+V14 improves observability and Codex capability handoffs. Dynamic tool calls now write live dashboard/web-console events, the main Studio UI shows what the AI is doing by default, and image-generation requests can be turned into pinned handoff briefs that are later registered as generated image assets.
+
+V15 makes live observability cheaper and clearer. Tool calls now flow through a compact observability spine with active-tool tracking, debounced dashboard sync, faster `/api/live` polling, lazy web-console heavy tabs, and addon health diagnostics.
+
 ## What It Does
 
 - Reuses local Codex/ChatGPT credentials through `codex app-server`.
@@ -59,12 +63,15 @@ V10 is the workflow-graph hardening pass. The goal is to turn `Workflow` into a 
 - Pins useful outputs outside the raw transcript so long threads remain navigable.
 - Provides native `Codex Prompt Draft`, `Codex Chat Transcript`, and `Codex Activity Log` text blocks for multiline chat work.
 - Exposes structured dynamic tools for scene reads, edits, import/export, rigs, animation, materials, and toolbox recipes.
+- Exposes `list_live_ai_activity` and `run_addon_health_check` so Codex can inspect active tools, recent tool events, sync timing, install health, service state, and web-console status.
 - Exposes callable `Codex AI Workflow` node graphs for scene snapshots, selection, thread memory, tool calls, toolbox recipes, asset search, approval gates, prompts, and asset publishing.
 - Keeps `Workflow` focused on AI-managed orchestration: new graphs are blank or unconnected by default, and starter/example graphs are explicit.
 - Exposes the full Blender `bpy.ops` operator system through a context-aware bridge.
 - Stores reusable external files and selected-object `.blend` bundles in a local asset library.
 - Lets long transcripts disappear from the UI while keeping the current thread alive.
 - Shows live activity from streaming text, planning, reasoning summaries, and tool calls.
+- Shows a default-visible `What AI Is Doing` feed with recent prompt, tool, approval, image-brief, and visual-review events.
+- Adds Codex capability bridges such as `list_codex_capabilities`, `create_image_generation_brief`, and `register_generated_image_asset`.
 - Keeps Codex credentials owned by Codex instead of copying token files into the add-on.
 - Ships with both legacy `bl_info` metadata and a Blender 4.5 extension `blender_manifest.toml`.
 
@@ -174,6 +181,9 @@ Dashboard, memory, and surface targeting:
 
 - `list_studio_context`
 - `list_dashboard_context`
+- `list_codex_capabilities`
+- `create_image_generation_brief`
+- `register_generated_image_asset`
 - `list_ai_scope`
 - `list_context_chips`
 - `list_action_cards`

@@ -137,6 +137,48 @@ def test_web_console_lifecycle_and_status_roundtrip(tmp_path: Path) -> None:
         assert stopped.url == ""
 
 
+def test_web_console_live_endpoint_can_use_compact_provider() -> None:
+    full_state = {
+        "version": "0.15.0",
+        "service": {"status": "full"},
+        "screenshots": [{"path": "heavy.png"}],
+        "raw_heavy": {"large": True},
+    }
+    live_state = {
+        "version": "0.15.0",
+        "service": {"status": "live"},
+        "sequence": 44,
+        "active_tool_events": [{"tool_name": "validate_gpt_asset", "status": "running"}],
+        "tool_events": [{"tool_name": "validate_gpt_asset", "status": "running"}],
+        "addon_health": {"ok": True},
+    }
+    server = WebConsoleServer(
+        state_provider=lambda: dict(full_state),
+        live_state_provider=lambda: dict(live_state),
+        host="127.0.0.1",
+        port=0,
+        token="compact-token",
+    )
+
+    try:
+        started = server.start()
+        _wait_for_ready(started.url, started.token)
+
+        status_code, _, status_payload = _request_json(started.url, f"api/status?token={quote(started.token)}")
+        live_status, _, live_payload = _request_json(started.url, f"api/live?token={quote(started.token)}")
+
+        assert status_code == 200
+        assert status_payload["service"]["status"] == "full"
+        assert status_payload["screenshots"][0]["path"] == "heavy.png"
+        assert live_status == 200
+        assert live_payload["service"]["status"] == "live"
+        assert live_payload["sequence"] == 44
+        assert live_payload["active_tool_events"][0]["tool_name"] == "validate_gpt_asset"
+        assert "screenshots" not in live_payload
+    finally:
+        server.stop()
+
+
 def test_web_console_rejects_missing_or_invalid_tokens() -> None:
     state = {"version": "0.15.0"}
     server = WebConsoleServer(state_provider=lambda: dict(state), host="127.0.0.1", port=0, token="secret-token")
@@ -177,6 +219,8 @@ def test_web_console_basic_api_and_control_handler() -> None:
         "overlays": {"visible": True},
         "logs": [{"label": "WEB CONSOLE STARTED", "summary": "Console is live."}],
         "startup_trace": [{"label": "WEB CONSOLE STARTED", "summary": "Console is live."}],
+        "capabilities": [{"id": "image_generation", "label": "Generate images"}],
+        "tool_events": [{"actor": "tool", "label": "Tool completed: list_studio_context", "status": "completed"}],
         "runs": {"active_run_id": "run-1", "active": {"run_id": "run-1"}, "recent": [{"run_id": "run-1"}], "index": {"run-1": {"run_id": "run-1"}}},
     }
     server = WebConsoleServer(
@@ -220,11 +264,15 @@ def test_web_console_basic_api_and_control_handler() -> None:
             ("api/repair-plan", "repair_plan"),
             ("api/overlays", "overlays"),
             ("api/logs", "logs"),
+            ("api/capabilities", "capabilities"),
             ("api/runs", "runs"),
         ]:
             status_code, _, payload = _request_json(started.url, f"{endpoint}?token={quote(started.token)}")
             assert status_code == 200
             assert key in payload
+        status_code, _, payload = _request_json(started.url, f"api/capabilities?token={quote(started.token)}")
+        assert status_code == 200
+        assert payload["tool_events"][0]["label"] == "Tool completed: list_studio_context"
 
         status_code, _, payload = _request_json(started.url, f"api/runs/run-1?token={quote(started.token)}")
         assert status_code == 200
@@ -248,7 +296,10 @@ def test_web_console_exposes_observability_sections_and_run_payloads() -> None:
         "automation_events": [
             {"event_id": "event-1", "actor": "codex", "phase": "creator_prompt", "status": "running", "label": "CREATING", "timestamp": "2026-04-22T10:00:03Z", "summary": "Creator prompt sent."},
             {"event_id": "event-2", "actor": "validator", "phase": "geometry", "status": "done", "label": "VERIFYING GEOMETRY", "timestamp": "2026-04-22T10:00:04Z", "summary": "Evaluated geometry checks completed."},
+            {"event_id": "event-3", "actor": "tool", "phase": "tool_running", "status": "running", "label": "Tool running: validate_gpt_asset", "timestamp": "2026-04-22T10:00:05Z", "summary": "selected_only=True"},
         ],
+        "tool_events": [{"event_id": "event-3", "actor": "tool", "status": "running", "label": "Tool running: validate_gpt_asset", "summary": "selected_only=True"}],
+        "capabilities": [{"id": "image_generation", "label": "Generate images", "status": "handoff_ready", "tool_names": ["create_image_generation_brief"]}],
         "logs": [
             {"event_id": "log-1", "type": "web_console", "label": "WEB CONSOLE STARTED", "status": "completed", "created_at": "2026-04-22T10:00:00Z", "summary": "http://127.0.0.1:9999"},
             {"event_id": "log-2", "type": "automation", "label": "SERVICE STARTING", "status": "running", "created_at": "2026-04-22T10:00:02Z", "summary": "Starting app-server."},
@@ -375,7 +426,12 @@ def test_web_console_exposes_observability_sections_and_run_payloads() -> None:
         assert "Validate now" in html_body
         assert "Apply safe repair" in html_body
         assert "live: '/api/live'" in html_body
-        assert "setInterval(load, 750)" in html_body
+        assert "capabilities: '/api/capabilities'" in html_body
+        assert "Capabilities" in html_body
+        assert "setInterval(() => load(false), LIVE_REFRESH_MS)" in html_body
+        assert "Promise.all(keys.map" not in html_body
+        assert "TAB_ENDPOINT_KEYS" in html_body
+        assert "setToolEventFilter" in html_body
         assert "<details open>" not in html_body
 
         live_status, _, live_payload = _request_json(started.url, f"api/live?token={quote(started.token)}")
@@ -389,6 +445,7 @@ def test_web_console_exposes_observability_sections_and_run_payloads() -> None:
         runs_status, _, runs_payload = _request_json(started.url, f"api/runs?token={quote(started.token)}")
         run_status, _, run_payload = _request_json(started.url, f"api/runs/run-1?token={quote(started.token)}")
         critic_status, _, critic_payload = _request_json(started.url, f"api/critic?token={quote(started.token)}")
+        capabilities_status, _, capabilities_payload = _request_json(started.url, f"api/capabilities?token={quote(started.token)}")
 
         assert live_status == 200
         assert live_payload["sequence"] == 7
@@ -416,6 +473,9 @@ def test_web_console_exposes_observability_sections_and_run_payloads() -> None:
         assert run_payload["run"]["run_id"] == "run-1"
         assert critic_status == 200
         assert critic_payload["critic"]["summary"] == "Focus on tower-wall intersections first."
+        assert capabilities_status == 200
+        assert capabilities_payload["capabilities"][0]["id"] == "image_generation"
+        assert capabilities_payload["tool_events"][0]["label"] == "Tool running: validate_gpt_asset"
     finally:
         server.stop()
 

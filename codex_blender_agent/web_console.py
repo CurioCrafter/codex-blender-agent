@@ -58,12 +58,14 @@ class WebConsoleServer:
         self,
         *,
         state_provider: StateProvider,
+        live_state_provider: StateProvider | None = None,
         control_handler: ControlHandler | None = None,
         host: str = "127.0.0.1",
         port: int = 0,
         token: str | None = None,
     ) -> None:
         self.state_provider = state_provider
+        self.live_state_provider = live_state_provider
         self.control_handler = control_handler
         self.host = host
         self.requested_port = int(port or 0)
@@ -140,7 +142,18 @@ class WebConsoleServer:
         return state
 
     def live_state(self) -> dict[str, Any]:
-        state = self.public_state()
+        if self.live_state_provider is not None:
+            try:
+                state = dict(self.live_state_provider() or {})
+            except Exception as exc:
+                state = {"error": str(exc)}
+            cached_web = state.get("web_console", {}) if isinstance(state.get("web_console", {}), dict) else {}
+            public_web = self.status().as_public_dict()
+            if "auto_started" in cached_web:
+                public_web["auto_started"] = bool(cached_web.get("auto_started", False))
+            state["web_console"] = public_web
+        else:
+            state = self.public_state()
         try:
             sequence = int(state.get("sequence", 0) or 0)
         except Exception:
@@ -204,6 +217,7 @@ class _ConsoleHandler(BaseHTTPRequestHandler):
             "/api/screenshots",
             "/api/logs",
             "/api/timeline",
+            "/api/capabilities",
             "/api/critic",
             "/api/raw",
         }:
@@ -320,6 +334,14 @@ def _section_payload(state: dict[str, Any], section: str) -> dict[str, Any]:
         return {"logs": state.get("logs", []), "startup_trace": state.get("startup_trace", []), "backend_error": state.get("backend_error", {})}
     if section == "timeline":
         return {"timeline": state.get("timeline", [])}
+    if section == "capabilities":
+        return {
+            "capabilities": state.get("capabilities", []),
+            "tool_events": state.get("tool_events", []),
+            "active_tool_events": state.get("active_tool_events", []),
+            "observability": state.get("observability", {}),
+            "addon_health": state.get("addon_health", {}),
+        }
     if section == "critic":
         return {"critic": state.get("critic", {})}
     if section == "runs":
@@ -521,6 +543,7 @@ const SECTION_ENDPOINTS = {{
   critic: '/api/critic',
   logs: '/api/logs',
   timeline: '/api/timeline',
+  capabilities: '/api/capabilities',
   runs: '/api/runs',
   raw: '/api/raw',
   visual: '/api/visual-review',
@@ -535,6 +558,7 @@ const TABS = [
   ['repair', 'Repair Plan'],
   ['critic', 'Critic'],
   ['timeline', 'Timeline'],
+  ['capabilities', 'Capabilities'],
   ['runs', 'Runs'],
   ['raw', 'Raw JSON'],
 ];
@@ -552,13 +576,31 @@ const SECTIONS = [
 ];
 let ACTIVE_TAB = 'overview';
 let DATA = {{}};
+let LAST_HEAVY_LOAD = 0;
+let TOOL_EVENT_FILTER = 'all';
+const LIVE_REFRESH_MS = 750;
+const HEAVY_REFRESH_MS = 7000;
+const TAB_ENDPOINT_KEYS = {{
+  overview: 'overview',
+  screenshots: 'screenshots',
+  algorithms: 'algorithms',
+  intent: 'intent',
+  constraints: 'constraints',
+  issues: 'issues',
+  repair: 'repair',
+  critic: 'critic',
+  timeline: 'timeline',
+  capabilities: 'capabilities',
+  runs: 'runs',
+  raw: 'raw',
+}};
 const api = path => fetch(path + (path.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN), {{cache:'no-store'}}).then(r => r.json());
 async function control(action) {{
   const result = await fetch('/api/control/' + action + '?token=' + encodeURIComponent(TOKEN), {{method: 'POST'}});
   const payload = await result.json();
   const status = payload.ok ? ('ACTION: ' + action.toUpperCase()) : ('NEEDS ATTENTION: ' + (payload.error || action));
   document.getElementById('summary').textContent = status;
-  await load();
+  await load(true);
 }}
 function esc(v) {{ return String(v ?? '').replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c])); }}
 function json(v) {{ return '<pre>' + esc(JSON.stringify(v, null, 2)) + '</pre>'; }}
@@ -713,7 +755,7 @@ function renderSceneNow(state) {{
   `;
 }}
 function renderLivePage() {{
-  const state = DATA.live || DATA.overview || {{}};
+  const state = Object.assign({{}}, DATA.overview || {{}}, DATA.live || {{}});
   const validation = state.validation || {{}};
   const algorithms = state.algorithms || [];
   const screenshots = state.screenshots || [];
@@ -812,6 +854,13 @@ function renderTabs() {{
 function setTab(id) {{
   ACTIVE_TAB = id;
   renderTabs();
+  load(true).catch(error => {{
+    document.getElementById('summary').textContent = 'Tab load failed: ' + String(error);
+    renderPanel();
+  }});
+}}
+function setToolEventFilter(value) {{
+  TOOL_EVENT_FILTER = value || 'all';
   renderPanel();
 }}
 function sectionCard(title, body) {{
@@ -1055,6 +1104,48 @@ function renderRuns() {{
     <div class="card" style="margin-top:12px;"><h2>Run Index</h2>${{json(runs)}}</div>
   `;
 }}
+function renderCapabilities() {{
+  const payload = DATA.capabilities || {{}};
+  const capabilities = payload.capabilities || [];
+  const toolEvents = payload.tool_events || [];
+  const activeToolEvents = payload.active_tool_events || [];
+  const filteredToolEvents = toolEvents.filter(row => TOOL_EVENT_FILTER === 'all' || row.status === TOOL_EVENT_FILTER || row.category === TOOL_EVENT_FILTER);
+  const capabilityCards = capabilities.length ? '<div class="grid">' + capabilities.map(item => `
+    <div class="card">
+      <div class="row">
+        <b>${{esc(item.label || item.id || 'capability')}}</b>
+        ${{pill(item.status || 'available', item.status === 'active' ? 'good' : 'warn')}}
+        ${{item.runtime_status ? pill(item.runtime_status, item.runtime_status === 'running' ? 'warn' : 'good') : ''}}
+      </div>
+      <div class="muted">${{esc(item.description || '')}}</div>
+      <div class="row" style="margin-top:8px;">${{(item.tool_names || []).map(tool => pill(tool, 'good')).join('')}}</div>
+      <div class="muted" style="margin-top:8px;">${{esc(item.recovery || '')}}</div>
+    </div>`).join('') + '</div>' : '<div class="card muted">No capability registry available.</div>';
+  const activeFeed = activeToolEvents.length ? '<div class="stack">' + activeToolEvents.map(row => `
+    <div class="card">
+      <div class="row">
+        <b>${{esc(row.tool_name || row.label || 'running tool')}}</b>
+        ${{pill(row.status || 'running', 'warn')}}
+        ${{pill(row.category || '')}}
+        ${{row.duration_seconds !== undefined ? pill(row.duration_seconds + 's') : ''}}
+      </div>
+      <div>${{esc(row.summary || '')}}</div>
+    </div>`).join('') + '</div>' : '<div class="card muted">No tools currently running.</div>';
+  const filters = ['all', 'running', 'failed', 'completed', 'read_only', 'action_store', 'mutating', 'external_write', 'critical'];
+  const filterHtml = '<div class="row" style="margin-bottom:8px;"><label class="muted">Filter tool events </label><select onchange="setToolEventFilter(this.value)">' + filters.map(value => '<option value="' + esc(value) + '"' + (TOOL_EVENT_FILTER === value ? ' selected' : '') + '>' + esc(value) + '</option>').join('') + '</select></div>';
+  const toolFeed = filteredToolEvents.length ? '<div class="stack">' + filteredToolEvents.slice(-40).reverse().map(row => `
+    <div class="card">
+      <div class="row">
+        <b>${{esc(row.tool_name || row.label || 'tool event')}}</b>
+        ${{pill(row.status || '')}}
+        ${{pill(row.category || '')}}
+        ${{row.duration_seconds !== undefined ? pill(row.duration_seconds + 's') : ((row.artifacts || {{}}).duration_seconds !== undefined ? pill((row.artifacts || {{}}).duration_seconds + 's') : '')}}
+      </div>
+      <div class="muted">${{esc(row.created_at || '')}}</div>
+      <div>${{esc(row.error || row.summary || '')}}</div>
+    </div>`).join('') + '</div>' : '<div class="card muted">No tool events captured yet.</div>';
+  return capabilityCards + '<div class="card" style="margin-top:12px;"><h2>Currently Running Tool</h2>' + activeFeed + '</div>' + '<div class="card" style="margin-top:12px;"><h2>Recent Tool Events</h2>' + filterHtml + toolFeed + '</div>';
+}}
 function renderRaw() {{
   return '<div class="card"><h2>Raw Advanced JSON</h2>' + json(DATA.raw || DATA.status || DATA) + '</div>';
 }}
@@ -1069,36 +1160,43 @@ function renderPanel() {{
   else if (ACTIVE_TAB === 'repair') html = renderRepair();
   else if (ACTIVE_TAB === 'critic') html = renderCritic();
   else if (ACTIVE_TAB === 'timeline') html = renderTimeline();
+  else if (ACTIVE_TAB === 'capabilities') html = renderCapabilities();
   else if (ACTIVE_TAB === 'runs') html = renderRuns();
   else html = renderRaw();
   document.getElementById('content').innerHTML = html;
 }}
-async function load() {{
-  const keys = Object.keys(SECTION_ENDPOINTS);
-  const responses = await Promise.all(keys.map(async key => {{
+function normalizePayload(key, value) {{
+  if (key === 'live') return value;
+  if (key === 'overview') return value;
+  if (!value || typeof value !== 'object') return value;
+  if (key === 'screenshots') return value.screenshots || [];
+  if (key === 'algorithms') return value.algorithms || [];
+  if (key === 'intent') return value.intent_manifest || value.manifest || value;
+  if (key === 'constraints') return value.constraints || value.graph || value;
+  if (key === 'issues') return value.validation || value;
+  if (key === 'repair') return value.repair_plan || value;
+  if (key === 'critic') return value.critic || value;
+  if (key === 'logs') return value.logs || [];
+  if (key === 'timeline') return value.timeline || [];
+  if (key === 'capabilities') return value;
+  if (key === 'runs') return value.runs || value;
+  if (key === 'raw') return value.raw || value;
+  return value;
+}}
+async function load(forceHeavy=false) {{
+  const now = Date.now();
+  const live = await api(SECTION_ENDPOINTS.live);
+  DATA.live = normalizePayload('live', live);
+  const activeKey = TAB_ENDPOINT_KEYS[ACTIVE_TAB] || 'overview';
+  const shouldLoadHeavy = forceHeavy || !DATA[activeKey] || now - LAST_HEAVY_LOAD > HEAVY_REFRESH_MS;
+  if (shouldLoadHeavy) {{
     try {{
-      return [key, await api(SECTION_ENDPOINTS[key])];
+      DATA[activeKey] = normalizePayload(activeKey, await api(SECTION_ENDPOINTS[activeKey]));
+      LAST_HEAVY_LOAD = now;
     }} catch (error) {{
-      return [key, {{error: String(error)}}];
+      DATA[activeKey] = {{error: String(error)}};
     }}
-  }}));
-  DATA = Object.fromEntries(responses.map(([key, value]) => {{
-    if (key === 'live') return [key, value];
-    if (key === 'overview') return [key, value];
-    if (!value || typeof value !== 'object') return [key, value];
-    if (key === 'screenshots') return [key, value.screenshots || []];
-    if (key === 'algorithms') return [key, value.algorithms || []];
-    if (key === 'intent') return [key, value.intent_manifest || value.manifest || value];
-    if (key === 'constraints') return [key, value.constraints || value.graph || value];
-    if (key === 'issues') return [key, value.validation || value];
-    if (key === 'repair') return [key, value.repair_plan || value];
-    if (key === 'critic') return [key, value.critic || value];
-    if (key === 'logs') return [key, value.logs || []];
-    if (key === 'timeline') return [key, value.timeline || []];
-    if (key === 'runs') return [key, value.runs || value];
-    if (key === 'raw') return [key, value.raw || value];
-    return [key, value];
-  }}));
+  }}
   const state = DATA.live || DATA.overview || {{}};
   const liveError = DATA.live && (DATA.live.error || (DATA.live.backend_error || {{}}).summary) ? String(DATA.live.error || (DATA.live.backend_error || {{}}).summary) : '';
   const auto = state.automation || {{}};
@@ -1118,7 +1216,11 @@ async function load() {{
     '<p>Sequence: ' + esc(state.sequence ?? 0) + '</p>' +
     '<p>Web console: ' + esc((state.web_console || {{}}).url || 'n/a') + '</p>';
   document.getElementById('navLinks').innerHTML = SECTIONS.map(([id, label]) => '<a href="#' + id + '">' + esc(label) + '</a>').join('');
-  document.getElementById('content').innerHTML = renderLivePage();
+  if (ACTIVE_TAB === 'overview') {{
+    document.getElementById('content').innerHTML = renderLivePage();
+  }} else {{
+    renderPanel();
+  }}
 }}
 load().catch(error => {{
   const phase = document.getElementById('phase');
@@ -1127,7 +1229,7 @@ load().catch(error => {{
   document.getElementById('summary').textContent = 'The web console script could not load live state.';
   document.getElementById('subsummary').textContent = String(error);
 }});
-setInterval(load, 750);
+setInterval(() => load(false), LIVE_REFRESH_MS);
 </script>
 </body>
 </html>"""

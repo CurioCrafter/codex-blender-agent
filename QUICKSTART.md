@@ -10,6 +10,8 @@ Use `fast` execution friction for normal game creation. Local reversible/additiv
 
 Use `Improve with screenshots` when the result needs visual iteration. The add-on runs a creator pass, captures local viewport screenshots from planned viewpoints, sends those screenshots back to the critic phase in the same thread, then repeats with the critic's next prompt until the score target or pass limit is reached. The current task card shows phase, pass count, score, Stop, Continue, and View screenshots.
 
+Use `What AI Is Doing` when you want visibility. It shows the latest prompt routing, tool calls, approvals, image briefs, validation, and review-loop events without digging through the raw transcript.
+
 Open `Workflow` only when you want to inspect or edit an AI-generated graph. New graphs are blank or unconnected unless you explicitly create an example. Open `Assets` when you want to search, reuse, validate, publish, or package reusable assets.
 
 ## 1. Install And Open
@@ -29,6 +31,7 @@ Open `Workflow` only when you want to inspect or edit an AI-generated graph. New
 
 - Your home/dispatch screen.
 - Shows scene readiness, current AI scope, action cards, pinned outputs, running jobs, recent outputs, and live activity.
+- Includes Codex tool upgrades such as image-generation briefs, live console, visual-review capture, and AI Assets registration.
 - Use this when you want to understand what Codex is doing and what it plans to do next.
 
 `Workflow`
@@ -87,7 +90,19 @@ The workflow is intentionally visible.
 7. `Pinned Output` keeps useful results visible after the transcript scrolls away.
 8. `Workflow Graph` is for repeatable procedures that you want to run again later.
 
+Live visibility is now split into fast and heavy paths: the `What AI Is Doing` feed and web console `/api/live` update active tools quickly, while transcripts, assets, screenshots, and raw JSON load only when their heavier panels need them.
+
 The product rule is now low-friction: chat drives normal game-creation work, receipts record what changed, approval cards handle risky work, and recovery stays visible.
+
+## 5. Generate Images Through Codex
+
+Blender does not create pixels directly through this add-on, but it can prepare the handoff cleanly.
+
+1. Type what you want in `Ask AI`, such as a concept image, texture, icon, reference sheet, or skybox.
+2. Click `Generate Image Brief` in `Codex Tool Upgrades`.
+3. Use the pinned handoff prompt in your Codex/ChatGPT image-generation tool.
+4. Save the generated PNG/JPEG/WebP.
+5. Ask Codex to register that file, or use `register_generated_image_asset`, so it becomes searchable AI Assets memory.
 
 ## 5. Common Tasks
 

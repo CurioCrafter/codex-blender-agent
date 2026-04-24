@@ -215,6 +215,69 @@ _TOOL_SPECS = [
         },
     },
     {
+        "name": "list_live_ai_activity",
+        "description": "Return compact live Codex activity: active tool calls, recent tool lifecycle events, current activity, sync timings, and web-console sequence.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "run_addon_health_check",
+        "description": "Return first-class add-on diagnostics covering service, web console, install path, online access, observability queue health, and sync timings.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "list_codex_capabilities",
+        "description": "List higher-level Codex capability bridges exposed by the add-on, including image generation handoff, live observability, operator bridge, visual review, and AI Assets memory.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "create_image_generation_brief",
+        "description": "Create and pin a structured handoff brief for Codex/ChatGPT image generation. This does not generate pixels inside Blender; it prepares the prompt, references, intended use, and registration path for the external image tool.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string"},
+                "purpose": {"type": "string", "enum": ["concept", "texture", "reference", "ui", "skybox"]},
+                "style": {"type": "string"},
+                "target_engine": {"type": "string"},
+                "asset_name": {"type": "string"},
+                "size": {"type": "string"},
+                "negative_prompt": {"type": "string"},
+                "reference_paths": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["prompt"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "register_generated_image_asset",
+        "description": "Register a generated PNG/JPEG/WebP or other image file as an AI Assets image/reference record after image generation. Requires an approved running action card because it writes to the asset library.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "filepath": {"type": "string"},
+                "name": {"type": "string"},
+                "description": {"type": "string"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "copy_file": {"type": "boolean"},
+                "source_brief_path": {"type": "string"},
+            },
+            "required": ["filepath", "name"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "get_visual_review_context",
         "description": "Return the active screenshot self-review loop, settings, current phase, and recent runs.",
         "inputSchema": {

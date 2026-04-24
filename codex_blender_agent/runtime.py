@@ -29,6 +29,7 @@ from .chat_surfaces import (
     write_prompt_draft_body,
     write_transcript,
 )
+from .codex_capabilities import build_image_generation_brief, list_codex_capabilities, render_image_generation_brief
 from .constants import ADDON_ID, ADDON_VERSION, MAX_VISIBLE_MESSAGES, short_thread_id
 from .core.service import CodexService
 from .dashboard_store import DEFAULT_PROJECT_ID, DashboardStore, make_project_id
@@ -36,6 +37,7 @@ from .dispatcher import MainThreadDispatcher
 from .asset_validation import validate_scene_asset
 from .game_creator import creator_context_payload, prompt_execution_decision, should_auto_start_visual_review, tool_execution_decision
 from .model_defaults import DEFAULT_REASONING_EFFORT, preferred_model_id, valid_reasoning_effort
+from .observability import ObservabilityStore, TimingScope
 from .quick_prompts import get_quick_prompt, list_quick_prompts, quick_prompt_payload, render_quick_prompt
 from .scene_tools import execute_tool
 from .storage import ChatHistoryStore
@@ -139,10 +141,18 @@ class BlenderAddonRuntime:
         self._visual_review_last_turn_in_progress = False
         self._web_console: WebConsoleServer | None = None
         self._web_console_cache: dict[str, Any] = {}
+        self._web_console_live_cache: dict[str, Any] = {}
         self._web_console_sequence = 0
+        self._last_live_sequence = 0
         self._prompt_events: list[dict[str, Any]] = []
         self._automation_events: list[dict[str, Any]] = []
         self._console_log_rows: list[dict[str, Any]] = []
+        self._observability = ObservabilityStore()
+        self._light_sync_requested = True
+        self._heavy_sync_requested = True
+        self._last_heavy_sync_monotonic = 0.0
+        self._last_dashboard_poll_monotonic = 0.0
+        self._last_web_console_full_monotonic = 0.0
         self._web_console_auto_started = False
         self._last_scene_object_names: set[str] = set()
         self._last_stream_recovering = False
@@ -214,6 +224,7 @@ class BlenderAddonRuntime:
         if self._web_console is None:
             self._web_console = WebConsoleServer(
                 state_provider=lambda: dict(self._web_console_cache),
+                live_state_provider=lambda: dict(self._web_console_live_cache or self._web_console_cache),
                 control_handler=self._handle_web_console_control_from_thread,
             )
         self._update_web_console_cache(context)
@@ -332,6 +343,7 @@ class BlenderAddonRuntime:
         )
         if context is not None and run_id:
             self._append_event_to_run(context, run_id, "prompt_events", event)
+        self._request_live_sync(heavy=False)
         if context is not None and update_cache:
             self._update_web_console_cache(context)
         return event
@@ -378,6 +390,7 @@ class BlenderAddonRuntime:
         )
         if context is not None and run_id:
             self._append_event_to_run(context, run_id, "automation_events", event)
+        self._request_live_sync(heavy=False)
         if context is not None and update_cache:
             self._update_web_console_cache(context)
         return event
@@ -470,6 +483,15 @@ class BlenderAddonRuntime:
         rows.extend(self._console_log_rows[-max(1, int(limit)) :])
         deduped = self._dedupe_events([row for row in rows if isinstance(row, dict)])
         return deduped[-max(1, int(limit)) :]
+
+    def _request_live_sync(self, *, heavy: bool = False) -> None:
+        self._light_sync_requested = True
+        self._observability.mark_dirty(light=True, heavy=heavy)
+        if heavy:
+            self._heavy_sync_requested = True
+
+    def _request_heavy_sync(self) -> None:
+        self._request_live_sync(heavy=True)
 
     def _startup_trace(self, logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         markers = {
@@ -669,6 +691,131 @@ class BlenderAddonRuntime:
 
     def list_asset_context(self, context: bpy.types.Context) -> dict[str, Any]:
         return self._asset_context(context)
+
+    def create_image_generation_brief(
+        self,
+        context: bpy.types.Context,
+        *,
+        prompt: str,
+        purpose: str = "concept",
+        style: str = "",
+        target_engine: str = "",
+        asset_name: str = "",
+        size: str = "",
+        negative_prompt: str = "",
+        reference_paths: list[str] | None = None,
+    ) -> dict[str, Any]:
+        scene_context = {
+            **creator_context_payload(context),
+            "scope": getattr(context.window_manager, "codex_blender_active_scope", "selection"),
+            "scene_name": getattr(getattr(context, "scene", None), "name", ""),
+        }
+        brief = build_image_generation_brief(
+            prompt=prompt,
+            purpose=purpose,
+            style=style,
+            target_engine=target_engine,
+            asset_name=asset_name,
+            size=size,
+            negative_prompt=negative_prompt,
+            reference_paths=reference_paths or [],
+            scene_context=scene_context,
+        )
+        brief_dir = self._storage_root(context) / "image_generation_briefs"
+        brief_dir.mkdir(parents=True, exist_ok=True)
+        json_path = brief_dir / f"{brief['request_id']}.json"
+        markdown_path = brief_dir / f"{brief['request_id']}.md"
+        brief["json_path"] = str(json_path)
+        brief["markdown_path"] = str(markdown_path)
+        markdown_path.write_text(render_image_generation_brief(brief), encoding="utf-8")
+
+        try:
+            toolbox_item = self._toolbox_store(context).save_entry(
+                name=f"Image brief: {brief['title']}",
+                category="generate",
+                description=brief["summary"],
+                content=brief,
+                tags=["image-generation", brief["purpose"], "codex-handoff"],
+                entry_id=brief["request_id"],
+            )
+            brief["toolbox_item_id"] = toolbox_item.get("id", "")
+        except Exception as exc:
+            brief["toolbox_warning"] = compact_text(str(exc), 240)
+
+        json_path.write_text(json.dumps(brief, ensure_ascii=True, indent=2, sort_keys=True), encoding="utf-8")
+        store = self._dashboard_store(context)
+        output = store.pin_output(
+            title=f"Image brief: {brief['title']}",
+            summary=brief["handoff_prompt"],
+            kind="image_brief",
+            source_thread_id=self.service.snapshot().active_thread_id or store.active_thread_id(),
+            path=str(markdown_path),
+            project_id=self._active_project_id(context),
+        )
+        brief["pinned_output_id"] = output.get("output_id", "")
+        store.add_job_event(
+            "Image generation brief created",
+            "completed",
+            brief["summary"],
+            project_id=self._active_project_id(context),
+        )
+        self.record_automation_event(
+            context,
+            actor="capability",
+            phase="image_generation_brief",
+            status="completed",
+            label="IMAGE BRIEF CREATED",
+            summary=brief["summary"],
+            artifacts={"request_id": brief["request_id"], "path": str(markdown_path), "purpose": brief["purpose"]},
+            update_cache=False,
+        )
+        self._last_dashboard_signature = ""
+        self._sync_window_manager(context.window_manager, force=True)
+        return brief
+
+    def register_generated_image_asset(
+        self,
+        context: bpy.types.Context,
+        *,
+        filepath: str,
+        name: str,
+        description: str = "",
+        tags: list[str] | str | None = None,
+        copy_file: bool = True,
+        source_brief_path: str = "",
+    ) -> dict[str, Any]:
+        item = self._asset_store(context).save_file(
+            filepath=filepath,
+            name=name,
+            category="image",
+            description=description,
+            tags=tags,
+            copy_file=copy_file,
+            kind="generated_image",
+            metadata={
+                "source": "codex_image_generation",
+                "source_brief_path": source_brief_path,
+            },
+            is_generated=True,
+        )
+        store = self._dashboard_store(context)
+        output = store.pin_output(
+            title=f"Generated image: {item.get('name', name)}",
+            summary=description or f"Generated image asset registered from {filepath}.",
+            kind="image",
+            source_thread_id=self.service.snapshot().active_thread_id or store.active_thread_id(),
+            path=item.get("stored_path", filepath),
+            project_id=self._active_project_id(context),
+        )
+        store.add_job_event(
+            "Generated image asset registered",
+            "completed",
+            item.get("stored_path", filepath),
+            project_id=self._active_project_id(context),
+        )
+        self._last_dashboard_signature = ""
+        self._sync_window_manager(context.window_manager, force=True)
+        return {"asset": item, "pinned_output": output}
 
     def create_asset_action_card(
         self,
@@ -2445,7 +2592,139 @@ class BlenderAddonRuntime:
         payload["generated_at"] = self._event_timestamp()
         self._web_console_cache = _json_safe_web(payload)
         self._sync_web_console_window_manager(context)
+        self._last_web_console_full_monotonic = time.perf_counter()
         return self._web_console_cache
+
+    def _update_web_console_live_cache(self, context: bpy.types.Context) -> dict[str, Any]:
+        payload = self._build_web_console_live_payload(context)
+        self._web_console_live_cache = _json_safe_web(payload)
+        return self._web_console_live_cache
+
+    def _build_web_console_live_payload(self, context: bpy.types.Context) -> dict[str, Any]:
+        snapshot = self.service.snapshot()
+        web_state = self._web_console.status().as_public_dict() if self._web_console is not None else {"running": False, "url": "", "host": "127.0.0.1", "port": 0, "error": ""}
+        web_state["auto_started"] = bool(self._web_console_auto_started)
+        cached_validation = self._web_console_cache.get("validation", {}) if isinstance(self._web_console_cache, dict) else {}
+        cached_automation = self._web_console_cache.get("automation", {}) if isinstance(self._web_console_cache, dict) else {}
+        active_tools = self._observability.active_tool_events()
+        recent_tools = self._observability.recent_tool_events(limit=60)
+        sequence = max(int(self._observability.sequence), int(self._web_console_sequence), int(self._last_live_sequence))
+        self._last_live_sequence = sequence
+        health = self.run_addon_health_check(context, lightweight=True)
+        return {
+            "version": ADDON_VERSION,
+            "module_file": str(Path(__file__).resolve()),
+            "storage_root": str(self._storage_root(context)),
+            "sequence": sequence,
+            "generated_at": self._event_timestamp(),
+            "web_console": web_state,
+            "service": {
+                "status": snapshot.status_text,
+                "account": snapshot.account.email if snapshot.account else "",
+                "plan": snapshot.account.plan_type if snapshot.account else "",
+                "thread": short_thread_id(snapshot.active_thread_id),
+                "turn_in_progress": bool(snapshot.turn_in_progress),
+                "stream_recovering": bool(getattr(snapshot, "stream_recovering", False)),
+                "error_title": getattr(snapshot, "last_error_title", ""),
+                "error_summary": snapshot.last_error,
+                "error_recovery": getattr(snapshot, "last_error_recovery", ""),
+            },
+            "automation": {
+                "active": bool(snapshot.turn_in_progress or active_tools or cached_automation.get("active")),
+                "phase": "tool_running" if active_tools else str(cached_automation.get("phase", "idle")),
+                "phase_label": "TOOL RUNNING" if active_tools else str(cached_automation.get("phase_label", "READY")),
+                "activity": (f"Running {active_tools[0].get('tool_name', 'tool')}" if active_tools else snapshot.activity_text or str(cached_automation.get("activity", ""))),
+                "run_id": str(cached_automation.get("run_id", "")),
+                "score": cached_automation.get("score", 0.0),
+            },
+            "prompt_events": self._prompt_events[-20:],
+            "automation_events": self._automation_events[-40:],
+            "tool_events": recent_tools,
+            "active_tool_events": active_tools,
+            "observability": self._observability.as_dict(),
+            "addon_health": health,
+            "validation": cached_validation,
+            "backend_error": self._web_console_cache.get("backend_error", {}) if isinstance(self._web_console_cache, dict) else {},
+        }
+
+    def list_live_ai_activity(self, context: bpy.types.Context) -> dict[str, Any]:
+        self._update_web_console_live_cache(context)
+        return {
+            "active_tool_events": self._observability.active_tool_events(),
+            "recent_tool_events": self._observability.recent_tool_events(limit=80),
+            "current_activity": self._web_console_live_cache.get("automation", {}).get("activity", ""),
+            "observability": self._observability.as_dict(),
+            "sequence": self._web_console_live_cache.get("sequence", 0),
+            "web_console": self._web_console_live_cache.get("web_console", {}),
+            "addon_health": self._web_console_live_cache.get("addon_health", {}),
+        }
+
+    def run_addon_health_check(self, context: bpy.types.Context, *, lightweight: bool = False) -> dict[str, Any]:
+        snapshot = self.service.snapshot()
+        module_file = Path(__file__).resolve()
+        package_root = module_file.parent
+        manifest_path = package_root / "blender_manifest.toml"
+        manifest_version = ""
+        if manifest_path.exists():
+            try:
+                for line in manifest_path.read_text(encoding="utf-8").splitlines():
+                    if line.strip().startswith("version"):
+                        manifest_version = line.split("=", 1)[1].strip().strip('"')
+                        break
+            except Exception:
+                manifest_version = ""
+        if self._web_console is None:
+            web_state = {"running": False, "url": "", "host": "127.0.0.1", "port": 0, "error": "", "auto_started": False}
+        else:
+            web_state = self._web_console.status().as_public_dict()
+            web_state["auto_started"] = bool(self._web_console_auto_started)
+        observability = self._observability.as_dict()
+        warnings = []
+        online_access = bool(getattr(bpy.app, "online_access", True))
+        if not online_access:
+            warnings.append("Blender online access is disabled.")
+        if web_state.get("error"):
+            warnings.append(str(web_state.get("error")))
+        if manifest_version and manifest_version != ADDON_VERSION:
+            warnings.append(f"Manifest version {manifest_version} differs from constants version {ADDON_VERSION}.")
+        if observability.get("active_tool_count", 0) and not snapshot.turn_in_progress:
+            warnings.append("Tool activity is active while the service does not report a turn in progress.")
+        payload = {
+            "ok": not warnings,
+            "summary": "OK" if not warnings else "; ".join(warnings),
+            "version": ADDON_VERSION,
+            "manifest_version": manifest_version,
+            "module_file": str(module_file),
+            "package_root": str(package_root),
+            "extension_root": str(package_root.parent),
+            "storage_root": str(self._storage_root(context)),
+            "online_access": online_access,
+            "service": {
+                "running": self.service.is_running(),
+                "status": snapshot.status_text,
+                "account": snapshot.account.email if snapshot.account else "",
+                "thread": short_thread_id(snapshot.active_thread_id),
+                "turn_in_progress": bool(snapshot.turn_in_progress),
+                "stream_recovering": bool(getattr(snapshot, "stream_recovering", False)),
+                "last_error": snapshot.last_error,
+            },
+            "web_console": web_state,
+            "observability": observability,
+            "sync": observability.get("sync", {}),
+            "light_sync_requested": bool(self._light_sync_requested),
+            "heavy_sync_requested": bool(self._heavy_sync_requested),
+        }
+        if not lightweight:
+            payload["dashboard_signature"] = self._dashboard_signature(context)
+            payload["dashboard_poll_age_seconds"] = round(max(time.perf_counter() - self._last_dashboard_poll_monotonic, 0.0), 3)
+        return payload
+
+    @staticmethod
+    def _health_summary_from_payload(payload: dict[str, Any]) -> str:
+        status = "OK" if payload.get("ok") else "Needs attention"
+        sync = payload.get("sync", {}) if isinstance(payload.get("sync", {}), dict) else {}
+        active = int(payload.get("observability", {}).get("active_tool_count", 0) if isinstance(payload.get("observability", {}), dict) else 0)
+        return f"{status} | active tools {active} | light sync {sync.get('light_count', 0)} | heavy sync {sync.get('heavy_count', 0)}"
 
     def _backend_error_payload(self, exc: Exception) -> dict[str, Any]:
         return {
@@ -2501,6 +2780,8 @@ class BlenderAddonRuntime:
             },
             "prompt_events": list(self._prompt_events),
             "automation_events": list(self._automation_events),
+            "tool_events": [event for event in self._automation_events if event.get("actor") == "tool"][-80:],
+            "capabilities": list_codex_capabilities(),
             "logs": logs,
             "startup_trace": self._startup_trace(logs),
             "scene_snapshot": {},
@@ -2597,8 +2878,11 @@ class BlenderAddonRuntime:
         automation_events = self._dedupe_events(
             list(run.get("automation_events", []) or []) + list(self._automation_events) + timeline_events
         )
+        legacy_tool_events = [event for event in automation_events if event.get("actor") == "tool"][-80:]
+        tool_events = self._observability.recent_tool_events(limit=80) or legacy_tool_events
         scene_snapshot = self._scene_snapshot_payload(context, validation)
         logs = self._recent_console_logs(context)
+        addon_health = self.run_addon_health_check(context, lightweight=True)
         return {
             "version": ADDON_VERSION,
             "module_file": str(Path(__file__).resolve()),
@@ -2633,6 +2917,11 @@ class BlenderAddonRuntime:
             },
             "prompt_events": prompt_events,
             "automation_events": automation_events,
+            "tool_events": tool_events,
+            "active_tool_events": self._observability.active_tool_events(),
+            "observability": self._observability.as_dict(),
+            "addon_health": addon_health,
+            "capabilities": self._capabilities_with_status(),
             "scene_snapshot": scene_snapshot,
             "visual_review": {
                 "active_run": run,
@@ -2668,6 +2957,24 @@ class BlenderAddonRuntime:
             },
             "timeline": timeline[-150:],
         }
+
+    def _capabilities_with_status(self) -> list[dict[str, Any]]:
+        active_tools = {str(event.get("tool_name", "")) for event in self._observability.active_tool_events()}
+        recent_tools = {str(event.get("tool_name", "")) for event in self._observability.recent_tool_events(limit=40)}
+        capabilities = []
+        for item in list_codex_capabilities():
+            row = dict(item)
+            tools = {str(tool) for tool in row.get("tool_names", [])}
+            if tools & active_tools:
+                row["runtime_status"] = "running"
+            elif tools & recent_tools:
+                row["runtime_status"] = "recent"
+            else:
+                row["runtime_status"] = row.get("status", "available")
+            row["active_tool_count"] = len(tools & active_tools)
+            row["recent_tool_count"] = len(tools & recent_tools)
+            capabilities.append(row)
+        return capabilities
 
     def list_visual_review_runs(self, context: bpy.types.Context, *, limit: int = 20) -> list[dict[str, Any]]:
         return self._visual_review_store(context).list_runs(limit=limit)
@@ -3719,24 +4026,196 @@ class BlenderAddonRuntime:
                 ],
             }
         if threading.current_thread() is threading.main_thread():
-            return self._execute_dynamic_tool(bpy.context, tool_name, arguments)
-        return self.dispatcher.submit(lambda: self._execute_dynamic_tool(bpy.context, tool_name, arguments)).wait()
+            return self._execute_observed_dynamic_tool(bpy.context, tool_name, arguments)
+        return self.dispatcher.submit(lambda: self._execute_observed_dynamic_tool(bpy.context, tool_name, arguments)).wait()
+
+    def _execute_observed_dynamic_tool(self, context: bpy.types.Context, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        args = dict(arguments or {})
+        started = time.perf_counter()
+        running_event = self._record_ai_tool_event(context, tool_name, args, "running")
+        lifecycle_id = str(running_event.get("lifecycle_id", ""))
+        try:
+            result = self._execute_dynamic_tool(context, tool_name, args)
+        except Exception as exc:
+            self._record_ai_tool_event(context, tool_name, args, "failed", started=started, error=str(exc), lifecycle_id=lifecycle_id)
+            raise
+        status = "completed" if bool(result.get("success", False)) else "failed"
+        self._record_ai_tool_event(context, tool_name, args, status, started=started, result=result, lifecycle_id=lifecycle_id)
+        return result
+
+    def _record_ai_tool_event(
+        self,
+        context: bpy.types.Context | None,
+        tool_name: str,
+        arguments: dict[str, Any],
+        status: str,
+        *,
+        started: float | None = None,
+        result: dict[str, Any] | None = None,
+        error: str = "",
+        lifecycle_id: str = "",
+    ) -> dict[str, Any]:
+        elapsed = 0.0 if started is None else max(time.perf_counter() - started, 0.0)
+        argument_summary = summarize_arguments(arguments, limit=220)
+        result_summary = self._dynamic_tool_result_preview(result) if result else ""
+        detail_parts = [part for part in (argument_summary, result_summary, error) if part]
+        detail = " | ".join(detail_parts)
+        label = f"Tool {status}: {tool_name}"
+        policy = classify_tool(tool_name)
+        action_id = action_id_from_arguments(arguments)
+        live_event = self._observability.record_tool_event(
+            tool_name=tool_name,
+            arguments=strip_action_metadata(arguments),
+            status=status,
+            summary=detail or tool_name,
+            result_summary=result_summary,
+            error=error,
+            duration_seconds=elapsed,
+            category=policy.category,
+            risk=policy.risk,
+            action_id=action_id,
+            lifecycle_id=lifecycle_id,
+        )
+        artifacts = {
+            "tool_name": tool_name,
+            "arguments": strip_action_metadata(arguments),
+            "duration_seconds": round(elapsed, 3),
+            "lifecycle_id": live_event.get("lifecycle_id", ""),
+            "category": policy.category,
+            "risk": policy.risk,
+        }
+        if action_id:
+            artifacts["action_id"] = action_id
+        if result_summary:
+            artifacts["result_summary"] = result_summary
+        if error:
+            artifacts["error"] = error
+        try:
+            self.record_automation_event(
+                context,
+                actor="tool",
+                phase=f"tool_{status}",
+                status=status,
+                label=label,
+                summary=detail or tool_name,
+                artifacts=artifacts,
+                update_cache=False,
+            )
+        except Exception:
+            pass
+        self._request_live_sync(heavy=False)
+        if context is not None:
+            try:
+                self._dashboard_store(context).add_job_event(
+                    label=label,
+                    status=status,
+                    detail=detail,
+                    project_id=self._active_project_id(context),
+                )
+                self._heavy_sync_requested = True
+            except Exception:
+                pass
+        return live_event
+
+    @staticmethod
+    def _dynamic_tool_result_preview(result: dict[str, Any] | None) -> str:
+        if not result:
+            return ""
+        parts = []
+        for item in result.get("contentItems", []) or []:
+            if item.get("type") == "inputText":
+                text = str(item.get("text", "") or "").strip()
+                if text:
+                    parts.append(text)
+        if not parts:
+            return "success" if result.get("success", False) else "failed"
+        return compact_text(" ".join(parts), 240)
 
     def _sync_window_manager(self, window_manager: bpy.types.WindowManager, force: bool = False) -> None:
+        context = bpy.context
         snapshot = self.service.snapshot()
-        dashboard_signature = self._dashboard_signature(bpy.context)
-        if snapshot.version == self._last_synced_version and dashboard_signature == self._last_dashboard_signature and not force:
+        now = time.perf_counter()
+        snapshot_changed = snapshot.version != self._last_synced_version
+        light_needed = force or snapshot_changed or self._light_sync_requested or self._observability.dirty_light
+        heavy_needed = self._should_run_heavy_sync(context, snapshot, now, force=force, snapshot_changed=snapshot_changed)
+        if not light_needed and not heavy_needed:
             return
 
-        window_manager.codex_blender_dashboard_busy = snapshot.turn_in_progress or self.dispatcher.pending_count > 0
+        light_timer = TimingScope()
+        self._sync_window_manager_lightweight(window_manager, snapshot)
+        self._sync_live_tool_items(window_manager)
+        self._update_web_console_live_cache(context)
+        self._last_synced_version = snapshot.version
+        self._light_sync_requested = False
+        self._observability.record_sync("light", light_timer.elapsed())
+
+        if not heavy_needed:
+            return
+
+        heavy_timer = TimingScope()
+        dashboard_signature = self._dashboard_signature(context)
+        if not force and not snapshot_changed and dashboard_signature == self._last_dashboard_signature and not self._heavy_sync_requested:
+            self._observability.record_sync("heavy", heavy_timer.elapsed())
+            self._last_heavy_sync_monotonic = now
+            self._last_dashboard_poll_monotonic = now
+            return
+
+        self._last_dashboard_signature = dashboard_signature
+        self._persist_thread_snapshot(window_manager, snapshot)
+        if not getattr(window_manager, "codex_blender_redraw_paused", False) or force:
+            self.refresh_chat_transcript(context)
+        else:
+            ensure_chat_text_blocks()
+            write_activity_log(snapshot)
+        self._sync_dashboard_items(window_manager)
+        self._sync_toolbox_items(window_manager)
+        self._sync_asset_items(window_manager)
+        self._sync_studio_items(window_manager)
+        self._update_web_console_cache(context)
+        self._update_web_console_live_cache(context)
+        self._heavy_sync_requested = False
+        self._last_heavy_sync_monotonic = now
+        self._last_dashboard_poll_monotonic = now
+        self._observability.record_sync("heavy", heavy_timer.elapsed())
+
+    def _should_run_heavy_sync(self, context: bpy.types.Context, snapshot, now: float, *, force: bool, snapshot_changed: bool) -> bool:
+        if force:
+            return True
+        if self._heavy_sync_requested or self._observability.dirty_heavy:
+            return True
+        if snapshot_changed and not getattr(snapshot, "turn_in_progress", False):
+            return True
+        if snapshot_changed and now - self._last_heavy_sync_monotonic >= 1.0:
+            return True
+        if now - self._last_dashboard_poll_monotonic >= 1.5:
+            try:
+                changed = self._dashboard_signature(context) != self._last_dashboard_signature
+                if not changed:
+                    self._last_dashboard_poll_monotonic = now
+                return changed
+            except Exception:
+                return True
+        return False
+
+    def _sync_window_manager_lightweight(self, window_manager: bpy.types.WindowManager, snapshot) -> None:
+        window_manager.codex_blender_dashboard_busy = snapshot.turn_in_progress or self.dispatcher.pending_count > 0 or bool(self._observability.active_tool_events())
         window_manager.codex_blender_dashboard_progress = 0.25 if snapshot.turn_in_progress else 0.0
         window_manager.codex_blender_connection = snapshot.status_text
         window_manager.codex_blender_account = snapshot.account.email if snapshot.account else ""
         window_manager.codex_blender_plan = snapshot.account.plan_type if snapshot.account else ""
         window_manager.codex_blender_thread = short_thread_id(snapshot.active_thread_id)
         window_manager.codex_blender_pending = snapshot.turn_in_progress
-        window_manager.codex_blender_activity = snapshot.activity_text
+        active_tools = self._observability.active_tool_events()
+        if active_tools:
+            first = active_tools[0]
+            window_manager.codex_blender_activity = f"Running {first.get('tool_name', 'tool')}: {first.get('summary', '')}"
+        else:
+            window_manager.codex_blender_activity = snapshot.activity_text
         window_manager.codex_blender_error = snapshot.last_error
+        if hasattr(window_manager, "codex_blender_live_sequence"):
+            window_manager.codex_blender_live_sequence = int(self._observability.sequence)
+        if hasattr(window_manager, "codex_blender_addon_health_summary"):
+            window_manager.codex_blender_addon_health_summary = self._health_summary_from_payload(self.run_addon_health_check(bpy.context, lightweight=True))
         if hasattr(window_manager, "codex_blender_error_title"):
             window_manager.codex_blender_error_title = getattr(snapshot, "last_error_title", "")
         if hasattr(window_manager, "codex_blender_error_severity"):
@@ -3761,7 +4240,7 @@ class BlenderAddonRuntime:
         if resolved_effort != current_effort:
             window_manager.codex_blender_effort = resolved_effort
 
-        if not getattr(window_manager, "codex_blender_redraw_paused", False):
+        if not getattr(window_manager, "codex_blender_redraw_paused", False) and not getattr(snapshot, "turn_in_progress", False):
             window_manager.codex_blender_messages.clear()
             for message in snapshot.messages[-MAX_VISIBLE_MESSAGES:]:
                 entry = window_manager.codex_blender_messages.add()
@@ -3769,20 +4248,6 @@ class BlenderAddonRuntime:
                 entry.phase = message.phase
                 entry.status = message.status
                 entry.text = _preview(message.text)
-
-        self._last_synced_version = snapshot.version
-        self._last_dashboard_signature = dashboard_signature
-        self._persist_thread_snapshot(window_manager, snapshot)
-        if not getattr(window_manager, "codex_blender_redraw_paused", False) or force:
-            self.refresh_chat_transcript(bpy.context)
-        else:
-            ensure_chat_text_blocks()
-            write_activity_log(snapshot)
-        self._sync_dashboard_items(window_manager)
-        self._sync_toolbox_items(window_manager)
-        self._sync_asset_items(window_manager)
-        self._sync_studio_items(window_manager)
-        self._update_web_console_cache(bpy.context)
 
     def _execute_dynamic_tool(self, context: bpy.types.Context, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         arguments = dict(arguments or {})
@@ -4005,6 +4470,41 @@ class BlenderAddonRuntime:
             prompt = get_quick_prompt(prompt_id)
             rendered = render_quick_prompt(prompt_id, payload)
             return _tool_success(_json_text({**quick_prompt_payload(prompt), "rendered_prompt": rendered, "context": payload}))
+
+        if tool_name == "list_live_ai_activity":
+            return _tool_success(_json_text(self.list_live_ai_activity(context)))
+
+        if tool_name == "run_addon_health_check":
+            return _tool_success(_json_text(self.run_addon_health_check(context)))
+
+        if tool_name == "list_codex_capabilities":
+            return _tool_success(_json_text(list_codex_capabilities()))
+
+        if tool_name == "create_image_generation_brief":
+            brief = self.create_image_generation_brief(
+                context,
+                prompt=str(arguments.get("prompt", "")),
+                purpose=str(arguments.get("purpose", "concept")),
+                style=str(arguments.get("style", "")),
+                target_engine=str(arguments.get("target_engine", "")),
+                asset_name=str(arguments.get("asset_name", "")),
+                size=str(arguments.get("size", "")),
+                negative_prompt=str(arguments.get("negative_prompt", "")),
+                reference_paths=list(arguments.get("reference_paths") or []),
+            )
+            return _tool_success(_json_text(brief))
+
+        if tool_name == "register_generated_image_asset":
+            result = self.register_generated_image_asset(
+                context,
+                filepath=str(arguments.get("filepath", "")),
+                name=str(arguments.get("name", "")),
+                description=str(arguments.get("description", "")),
+                tags=arguments.get("tags", []),
+                copy_file=bool(arguments.get("copy_file", True)),
+                source_brief_path=str(arguments.get("source_brief_path", "")),
+            )
+            return _tool_success(_json_text(result))
 
         if tool_name == "create_workflow_from_intent":
             return _tool_success(
@@ -4591,6 +5091,12 @@ class BlenderAddonRuntime:
                 "recent": store.list_action_cards(project_id=project_id)[:8],
             },
             "recent_outputs": store.list_pinned_outputs(project_id=project_id, limit=8),
+            "capabilities": list_codex_capabilities(),
+            "tool_events": [
+                event
+                for event in store.list_job_timeline(project_id=project_id, limit=30)
+                if str(event.get("label", "")).lower().startswith("tool ")
+            ],
             "service": {
                 "status": snapshot.status_text,
                 "activity": snapshot.activity_text,
@@ -5351,6 +5857,30 @@ class BlenderAddonRuntime:
             entry.status = event.get("status", "")
             entry.detail = event.get("detail", "")
             entry.created_at = event.get("created_at", "")
+
+    def _sync_live_tool_items(self, window_manager: bpy.types.WindowManager) -> None:
+        if hasattr(window_manager, "codex_blender_active_tool_events"):
+            window_manager.codex_blender_active_tool_events.clear()
+            for event in self._observability.active_tool_events()[:8]:
+                self._copy_tool_event_to_rna(window_manager.codex_blender_active_tool_events.add(), event)
+        if hasattr(window_manager, "codex_blender_recent_tool_events"):
+            window_manager.codex_blender_recent_tool_events.clear()
+            for event in reversed(self._observability.recent_tool_events(limit=24)):
+                self._copy_tool_event_to_rna(window_manager.codex_blender_recent_tool_events.add(), event)
+
+    @staticmethod
+    def _copy_tool_event_to_rna(entry: Any, event: dict[str, Any]) -> None:
+        entry.event_id = str(event.get("event_id", ""))
+        entry.lifecycle_id = str(event.get("lifecycle_id", ""))
+        entry.tool_name = str(event.get("tool_name", ""))
+        entry.status = str(event.get("status", ""))
+        entry.category = str(event.get("category", ""))
+        entry.risk = str(event.get("risk", ""))
+        entry.summary = str(event.get("summary", ""))
+        entry.error = str(event.get("error", ""))
+        entry.created_at = str(event.get("created_at", ""))
+        entry.duration_seconds = float(event.get("duration_seconds", 0.0) or 0.0)
+        entry.action_id = str(event.get("action_id", ""))
 
     @staticmethod
     def _preferences(context: bpy.types.Context):

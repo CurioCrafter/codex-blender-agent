@@ -163,6 +163,20 @@ class CODEXBLENDERAGENT_JobTimelineItem(PropertyGroup):
     created_at: StringProperty(name="Created")
 
 
+class CODEXBLENDERAGENT_ToolActivityItem(PropertyGroup):
+    event_id: StringProperty(name="Event ID")
+    lifecycle_id: StringProperty(name="Lifecycle ID")
+    tool_name: StringProperty(name="Tool")
+    status: StringProperty(name="Status")
+    category: StringProperty(name="Category")
+    risk: StringProperty(name="Risk")
+    summary: StringProperty(name="Summary")
+    error: StringProperty(name="Error")
+    created_at: StringProperty(name="Created")
+    duration_seconds: FloatProperty(name="Duration", default=0.0, min=0.0)
+    action_id: StringProperty(name="Action ID")
+
+
 def _register_window_manager_properties() -> None:
     WindowManager.codex_blender_prompt = StringProperty(
         name="Prompt",
@@ -551,6 +565,15 @@ def _register_window_manager_properties() -> None:
     WindowManager.codex_blender_pinned_output_index = IntProperty(name="Pinned output index", default=-1, min=-1)
     WindowManager.codex_blender_job_timeline = CollectionProperty(type=CODEXBLENDERAGENT_JobTimelineItem)
     WindowManager.codex_blender_job_timeline_index = IntProperty(name="Timeline index", default=-1, min=-1)
+    WindowManager.codex_blender_active_tool_events = CollectionProperty(type=CODEXBLENDERAGENT_ToolActivityItem)
+    WindowManager.codex_blender_active_tool_event_index = IntProperty(name="Active tool index", default=-1, min=-1)
+    WindowManager.codex_blender_recent_tool_events = CollectionProperty(type=CODEXBLENDERAGENT_ToolActivityItem)
+    WindowManager.codex_blender_recent_tool_event_index = IntProperty(name="Recent tool index", default=-1, min=-1)
+    WindowManager.codex_blender_live_sequence = IntProperty(name="Live sequence", default=0, min=0)
+    WindowManager.codex_blender_addon_health_summary = StringProperty(
+        name="Health summary",
+        default="Health not checked yet.",
+    )
     WindowManager.codex_blender_dashboard_empty_state = StringProperty(
         name="Dashboard empty state",
         default="Ask Codex for a plan or create an action from the prompt draft.",
@@ -717,6 +740,12 @@ def _unregister_window_manager_properties() -> None:
         "codex_blender_pinned_output_index",
         "codex_blender_job_timeline",
         "codex_blender_job_timeline_index",
+        "codex_blender_active_tool_events",
+        "codex_blender_active_tool_event_index",
+        "codex_blender_recent_tool_events",
+        "codex_blender_recent_tool_event_index",
+        "codex_blender_live_sequence",
+        "codex_blender_addon_health_summary",
         "codex_blender_dashboard_empty_state",
         "codex_blender_tutorial_walkthrough",
         "codex_blender_tutorial_step",
@@ -745,6 +774,7 @@ CLASSES = (
     CODEXBLENDERAGENT_ActionCard,
     CODEXBLENDERAGENT_PinnedOutput,
     CODEXBLENDERAGENT_JobTimelineItem,
+    CODEXBLENDERAGENT_ToolActivityItem,
 )
 
 

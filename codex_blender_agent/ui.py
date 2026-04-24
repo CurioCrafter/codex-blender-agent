@@ -218,6 +218,12 @@ def _draw_install_and_web_console_status(layout: bpy.types.UILayout, context: bp
         alert = box.row()
         alert.alert = True
         alert.label(text=_compact_text(error, 92), icon="ERROR")
+    health_summary = str(getattr(window_manager, "codex_blender_addon_health_summary", "") or "")
+    live_sequence = int(getattr(window_manager, "codex_blender_live_sequence", 0) or 0)
+    if health_summary:
+        box.label(text=_compact_text(f"Live health: {health_summary}", 92 if compact else 120), icon="VIEWZOOM")
+    if live_sequence:
+        box.label(text=f"Live sequence: {live_sequence}", icon="TIME")
 
 
 def _draw_automation_status_panel(layout: bpy.types.UILayout, context: bpy.types.Context, *, compact: bool = False) -> None:
@@ -583,7 +589,7 @@ def _draw_job_timeline(layout: bpy.types.UILayout, window_manager: bpy.types.Win
     if window_manager.codex_blender_dashboard_busy:
         box.prop(window_manager, "codex_blender_dashboard_progress", text="Progress", slider=True)
     if len(window_manager.codex_blender_job_timeline) == 0:
-        box.label(text="No AI jobs yet. This timeline shows what Codex is doing now.")
+        box.label(text="No AI jobs yet. Tool calls, approvals, image briefs, and review passes appear here.")
         if window_manager.codex_blender_activity:
             _draw_wrapped_text(box, window_manager.codex_blender_activity, width=96)
         return
@@ -596,6 +602,97 @@ def _draw_job_timeline(layout: bpy.types.UILayout, window_manager: bpy.types.Win
         "codex_blender_job_timeline_index",
         rows=5,
     )
+
+
+def _draw_live_ai_feed(layout: bpy.types.UILayout, context: bpy.types.Context, *, compact: bool = False) -> None:
+    window_manager = context.window_manager
+    box = layout.box()
+    header = box.row(align=True)
+    header.label(text="What AI Is Doing", icon="TIME")
+    header.operator("codex_blender_agent.refresh_dashboard", text="", icon="FILE_REFRESH")
+    if window_manager.codex_blender_pending:
+        box.label(text=_compact_text(window_manager.codex_blender_activity or "Codex turn is running.", 120), icon="TIME")
+    elif window_manager.codex_blender_activity:
+        _draw_wrapped_text(box, _compact_text(window_manager.codex_blender_activity, 180), width=72 if compact else 96)
+    else:
+        box.label(text="Ready. The next prompt, tool call, approval, or image brief will be logged here.")
+    if len(getattr(window_manager, "codex_blender_active_tool_events", [])):
+        active_box = box.box()
+        active_box.label(text="Currently Running Tool", icon="PLAY")
+        limit = 2 if compact else 4
+        for index, event in enumerate(window_manager.codex_blender_active_tool_events):
+            if index >= limit:
+                break
+            row = active_box.row(align=True)
+            row.alert = event.status == "failed"
+            row.label(text=_compact_text(event.tool_name or event.lifecycle_id or "tool", 34 if compact else 48), icon="TIME")
+            row.label(text=_compact_text(event.category or event.status, 18))
+            if event.duration_seconds:
+                row.label(text=f"{event.duration_seconds:.2f}s")
+            summary = event.error or event.summary
+            if summary and not compact:
+                _draw_wrapped_text(active_box, _compact_text(summary, 120), width=92)
+    elif len(getattr(window_manager, "codex_blender_recent_tool_events", [])):
+        recent = window_manager.codex_blender_recent_tool_events[0]
+        box.label(text=f"Last tool: {_compact_text(recent.tool_name or recent.status, 44)} ({recent.status})", icon="TOOL_SETTINGS")
+    if len(window_manager.codex_blender_job_timeline):
+        limit = 3 if compact else 5
+        for index, event in enumerate(window_manager.codex_blender_job_timeline):
+            if index >= limit:
+                break
+            row = box.row(align=True)
+            visual = status_token(event.status)
+            row.alert = visual.alert
+            row.label(text=_compact_text(event.label or event.event_id or "AI event", 42 if compact else 64), icon=visual.icon)
+            if not compact and event.detail:
+                row.label(text=_compact_text(event.detail, 80))
+            if index == 0 and event.created_at:
+                row.label(text=_compact_text(event.created_at, 24))
+    else:
+        box.label(text="No live events recorded yet.")
+    if len(getattr(window_manager, "codex_blender_recent_tool_events", [])) and not compact:
+        tool_box = box.box()
+        tool_box.label(text="Recent Tool Events", icon="TOOL_SETTINGS")
+        for index, event in enumerate(window_manager.codex_blender_recent_tool_events):
+            if index >= 5:
+                break
+            row = tool_box.row(align=True)
+            visual = status_token(event.status)
+            row.alert = visual.alert
+            row.label(text=_compact_text(event.tool_name or event.event_id or "tool", 34), icon=visual.icon)
+            row.label(text=_compact_text(event.status, 14))
+            row.label(text=_compact_text(event.category or event.risk, 18))
+            if event.duration_seconds:
+                row.label(text=f"{event.duration_seconds:.2f}s")
+            detail = event.error or event.summary
+            if detail:
+                row.label(text=_compact_text(detail, 58))
+    row = box.row(align=True)
+    row.operator("codex_blender_agent.open_web_console", text="Open Live Console", icon="URL")
+    if window_manager.codex_blender_pending:
+        row.operator("codex_blender_agent.stop_turn", text="Stop Turn", icon="CANCEL")
+    else:
+        row.operator("codex_blender_agent.create_image_generation_brief", text="Image Brief", icon="IMAGE_DATA")
+
+
+def _draw_codex_capability_panel(layout: bpy.types.UILayout, context: bpy.types.Context, *, compact: bool = False) -> None:
+    box = layout.box()
+    header = box.row(align=True)
+    header.label(text="Codex Tool Upgrades", icon="TOOL_SETTINGS")
+    header.operator("codex_blender_agent.refresh_toolbox", text="", icon="FILE_REFRESH")
+    _draw_wrapped_text(
+        box,
+        "Use Codex beyond chat: generate image briefs, capture review views, inspect Blender operators, and register generated references as AI Assets.",
+        width=72 if compact else 96,
+    )
+    row = box.row(align=True)
+    row.operator("codex_blender_agent.create_image_generation_brief", text="Generate Image Brief", icon="IMAGE_DATA")
+    row.operator("codex_blender_agent.capture_visual_review_viewpoints", text="Capture Views", icon="CAMERA_DATA")
+    row = box.row(align=True)
+    row.operator("codex_blender_agent.open_web_console", text="Live Console", icon="URL")
+    row.operator("codex_blender_agent.open_assets_workspace", text="AI Assets", icon="ASSET_MANAGER")
+    if not compact:
+        box.label(text="After external image generation, register the file as an image asset from chat or Assets.")
 
 
 def _draw_workflow_explainer(layout: bpy.types.UILayout, context: bpy.types.Context) -> None:
@@ -1325,6 +1422,8 @@ def _draw_launcher_ui(layout: bpy.types.UILayout, context: bpy.types.Context) ->
     _draw_login_status_card(layout, window_manager, compact=True)
     _draw_install_and_web_console_status(layout, context, compact=True)
     _draw_game_creator_composer(layout, context, compact=True)
+    _draw_live_ai_feed(layout, context, compact=True)
+    _draw_codex_capability_panel(layout, context, compact=True)
     _draw_quick_prompts(layout, context, limit=6)
     _draw_current_task_summary(layout, context)
     row = box.row(align=True)
@@ -1351,6 +1450,8 @@ def _draw_dashboard_home(layout: bpy.types.UILayout, context: bpy.types.Context)
     _draw_login_status_card(layout, window_manager)
     _draw_install_and_web_console_status(layout, context)
     _draw_game_creator_composer(layout, context)
+    _draw_live_ai_feed(layout, context)
+    _draw_codex_capability_panel(layout, context)
     _draw_quick_prompts(layout, context, limit=10)
     _draw_current_task_summary(layout, context)
     _draw_studio_continue_session(layout, context)

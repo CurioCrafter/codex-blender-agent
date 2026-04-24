@@ -71,3 +71,20 @@ def test_web_console_auto_start_is_registered_and_load_persistent() -> None:
     assert "schedule_web_console_auto_start()" in load_post
     assert "WEB CONSOLE STARTED" in runtime_source
     assert "WEB CONSOLE START FAILED" in runtime_source
+
+
+def test_dynamic_tool_dispatch_records_visible_tool_events() -> None:
+    runtime_source = (ROOT / "codex_blender_agent" / "runtime.py").read_text(encoding="utf-8")
+    dispatch = _method_source(runtime_source, "_dispatch_tool_call")
+    observed = _method_source(runtime_source, "_execute_observed_dynamic_tool")
+    recorder = _method_source(runtime_source, "_record_ai_tool_event")
+
+    assert "_execute_observed_dynamic_tool" in dispatch
+    assert '_record_ai_tool_event(context, tool_name, args, "running")' in observed
+    assert '"completed" if bool(result.get("success", False)) else "failed"' in observed
+    assert "Tool {status}: {tool_name}" in recorder
+    assert "add_job_event" in recorder
+    assert "record_automation_event" in recorder
+    assert "self._sync_window_manager(context.window_manager, force=True)" not in recorder
+    assert "_request_live_sync(heavy=False)" in recorder
+    assert "record_tool_event" in recorder

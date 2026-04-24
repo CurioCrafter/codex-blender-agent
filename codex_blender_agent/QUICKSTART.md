@@ -9,8 +9,12 @@ This is the first 10 minutes guide for the add-on. The default path is now Game 
 3. Use quick prompts such as `Game-ready prop`, `Stylized material`, `Make variants`, `Low-poly prop workflow`, `Clean for export`, and `Teach first asset`.
 4. Let local reversible game-creation work run in `Fast` mode; the add-on records receipts and keeps Blender Undo available.
 5. Expect approval only for broad, destructive, external-write, package, generic operator-bridge, or critical actions.
-6. Open `Workflow` when you want to inspect an AI-generated graph; new graphs are blank or unconnected unless you explicitly create an example.
-7. Open `Assets` when you want to search, reuse, validate, publish, or package reusable assets.
+6. Watch `What AI Is Doing` for prompt routing, tool calls, approvals, image briefs, validation, and review-loop events.
+7. Use `Generate Image Brief` when you want Codex/ChatGPT image generation; the add-on pins a handoff prompt, then the generated file can be registered as an AI Asset.
+8. Open `Workflow` when you want to inspect an AI-generated graph; new graphs are blank or unconnected unless you explicitly create an example.
+9. Open `Assets` when you want to search, reuse, validate, publish, or package reusable assets.
+
+The live feed is optimized for speed: active tool calls and health status update through a compact observability path, while heavier transcript, asset, screenshot, and raw JSON panels refresh only when needed.
 
 ## 1. Open The AI Studio
 
@@ -21,7 +25,7 @@ This is the first 10 minutes guide for the add-on. The default path is now Game 
 
 Expected workspace split:
 
-- `AI Studio` is for orientation, scene readiness, action cards, pinned outputs, activity, and dispatch.
+- `AI Studio` is for orientation, scene readiness, action cards, pinned outputs, live AI/tool activity, image-generation handoffs, and dispatch.
 - `Workflow` is for repeatable node orchestration, preview, run history, and publish handoff.
 - `Assets` is for Blender-native libraries/catalogs, immutable asset versions, previews, package publish/import, toolbox recipes, pins, provenance, and diagnostics.
 

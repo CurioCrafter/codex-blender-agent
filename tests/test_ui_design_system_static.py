@@ -25,6 +25,8 @@ def test_view3d_launcher_is_chat_first_static_contract():
     assert "_draw_transcript" not in launcher
     assert "codex_blender_asset_items" not in launcher
     assert "_draw_game_creator_composer" in launcher
+    assert "_draw_live_ai_feed" in launcher
+    assert "_draw_codex_capability_panel" in launcher
     assert "_draw_quick_prompts" in launcher
     assert "_draw_current_task_summary" in launcher
     default_launcher = launcher.split("codex_blender_show_advanced_governance", 1)[0]
@@ -90,8 +92,27 @@ def test_v11_ui_operator_ids_are_registered_static_contract():
         "codex_blender_agent.run_quick_prompt",
         "codex_blender_agent.ai_setup_workflow",
         "codex_blender_agent.create_game_asset_from_prompt",
+        "codex_blender_agent.create_image_generation_brief",
     ):
         assert idname in operators
+
+
+def test_dashboard_exposes_live_ai_feed_and_codex_capabilities_static_contract():
+    ui_source = (ROOT / "codex_blender_agent" / "ui.py").read_text(encoding="utf-8")
+    live_feed = _function_source(ui_source, "_draw_live_ai_feed")
+    capabilities = _function_source(ui_source, "_draw_codex_capability_panel")
+    dashboard_home = _function_source(ui_source, "_draw_dashboard_home")
+
+    assert "What AI Is Doing" in live_feed
+    assert "codex_blender_job_timeline" in live_feed
+    assert "codex_blender_active_tool_events" in live_feed
+    assert "Currently Running Tool" in live_feed
+    assert "create_image_generation_brief" in live_feed
+    assert "Codex Tool Upgrades" in capabilities
+    assert "Generate Image Brief" in capabilities
+    assert "_draw_live_ai_feed" in dashboard_home
+    assert "_draw_codex_capability_panel" in dashboard_home
+    assert "Live health" in ui_source
 
 
 def test_action_card_draw_uses_design_system_actions():
