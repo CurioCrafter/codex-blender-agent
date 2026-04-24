@@ -52,6 +52,8 @@ def _sync_dashboard_collections(window_manager: bpy.types.WindowManager) -> None
         ("create_ai_workspaces", "Create AI Workspaces", "codex_blender_agent.create_ai_workspaces", "", "Create the opt-in AI Studio, Workflow, and Assets workspace suite."),
         ("diagnose_dashboard_workspace", "Diagnose Workspace", "codex_blender_agent.diagnose_dashboard_workspace", "", "Report workspace order, active workspace, and Studio tag state."),
         ("refresh_dashboard", "Refresh Studio", "codex_blender_agent.refresh_dashboard", "", "Resync projects, threads, and state from the backend."),
+        ("refresh_model_state", "Start / Refresh Models", "codex_blender_agent.refresh_model_state", "", "Start Codex and load selectable models before writing a prompt."),
+        ("run_recommended_workflow", "Run Recommended Workflow", "codex_blender_agent.run_recommended_workflow", "", "Run a context-aware AI Command Center workflow action."),
         ("send_npanel_chat", "Ask AI", "codex_blender_agent.send_npanel_chat", "", "Send the visible N-panel chat prompt."),
         ("start_visual_review_loop", "Improve with Screenshots", "codex_blender_agent.start_visual_review_loop", "", "Start the screenshot critique/improve loop from the prompt box."),
         ("stop_visual_review_loop", "Stop Visual Review", "codex_blender_agent.stop_visual_review_loop", "danger", "Stop the active visual self-review loop."),
@@ -312,6 +314,71 @@ class CODEXBLENDERAGENT_OT_refresh_state(Operator):
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
         return {"FINISHED"}
+
+
+class CODEXBLENDERAGENT_OT_refresh_model_state(Operator):
+    bl_idname = "codex_blender_agent.refresh_model_state"
+    bl_label = "Start / Refresh Models"
+    bl_description = "Start Codex and load model choices before writing or sending a prompt."
+
+    def execute(self, context: bpy.types.Context):
+        try:
+            state = get_runtime().refresh_model_state(context)
+            _sync_dashboard_collections(context.window_manager)
+            if state.get("model_ready"):
+                self.report({"INFO"}, f"Model ready: {state.get('selected_label', state.get('selected_model', ''))}")
+            else:
+                self.report({"WARNING"}, str(state.get("unavailable_reason", "No model ready.")))
+        except Exception as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class CODEXBLENDERAGENT_OT_run_recommended_workflow(Operator):
+    bl_idname = "codex_blender_agent.run_recommended_workflow"
+    bl_label = "Run Recommended Workflow"
+    bl_description = "Run one of the AI Command Center workflow actions."
+
+    action_id: StringProperty(name="Action ID", default="")
+
+    def execute(self, context: bpy.types.Context):
+        action_id = (self.action_id or "").strip()
+        wm = context.window_manager
+        try:
+            if action_id == "refresh_models":
+                return bpy.ops.codex_blender_agent.refresh_model_state()
+            if action_id == "explain_scene":
+                return bpy.ops.codex_blender_agent.run_quick_prompt(prompt_id="explain_context")
+            if action_id == "fix_selected":
+                return bpy.ops.codex_blender_agent.run_quick_prompt(prompt_id="clean_game_export")
+            if action_id == "make_game_asset":
+                return bpy.ops.codex_blender_agent.create_game_asset_from_prompt(asset_type="prop")
+            if action_id == "generate_reference_image":
+                if not (wm.codex_blender_prompt or "").strip():
+                    selection = ", ".join(obj.name for obj in list(getattr(context, "selected_objects", []) or [])[:4])
+                    wm.codex_blender_prompt = (
+                        f"Create a production reference image for modeling {selection or 'a reusable game asset'} in Blender."
+                    )
+                return bpy.ops.codex_blender_agent.create_image_generation_brief(purpose="reference")
+            if action_id == "review_with_screenshots":
+                if not (wm.codex_blender_prompt or "").strip():
+                    wm.codex_blender_prompt = "Review the current Blender scene or selection with screenshots and propose safe improvements."
+                return bpy.ops.codex_blender_agent.start_visual_review_loop()
+            if action_id == "save_reusable_asset":
+                return bpy.ops.codex_blender_agent.create_asset_publish_action()
+            if action_id == "recover_last_change":
+                if len(getattr(wm, "codex_blender_action_cards", []) or []):
+                    return bpy.ops.codex_blender_agent.recover_action()
+                return bpy.ops.codex_blender_agent.undo_last_ai_change()
+            if action_id == "open_web_console":
+                return bpy.ops.codex_blender_agent.open_web_console()
+            self.report({"WARNING"}, f"Unknown workflow action: {action_id or 'none'}")
+            return {"CANCELLED"}
+        except Exception as exc:
+            wm.codex_blender_error = str(exc)
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
 
 
 class CODEXBLENDERAGENT_OT_open_dashboard_workspace(Operator):
@@ -2951,6 +3018,8 @@ CLASSES = (
     CODEXBLENDERAGENT_OT_start_service,
     CODEXBLENDERAGENT_OT_stop_service,
     CODEXBLENDERAGENT_OT_refresh_state,
+    CODEXBLENDERAGENT_OT_refresh_model_state,
+    CODEXBLENDERAGENT_OT_run_recommended_workflow,
     CODEXBLENDERAGENT_OT_open_dashboard_workspace,
     CODEXBLENDERAGENT_OT_open_studio_workspace,
     CODEXBLENDERAGENT_OT_open_workflow_workspace,

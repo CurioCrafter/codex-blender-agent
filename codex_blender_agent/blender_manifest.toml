@@ -1,6 +1,6 @@
 schema_version = "1.0.0"
 id = "codex_blender_agent"
-version = "0.15.3"
+version = "0.16.0"
 name = "Codex Blender Agent"
 tagline = "Chat-first AI game creator for Blender"
 maintainer = "CurioCrafter"

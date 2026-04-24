@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 ADDON_ID = "codex_blender_agent"
-ADDON_VERSION = "0.15.3"
+ADDON_VERSION = "0.16.0"
 CLIENT_NAME = "codex-blender-agent"
 CLIENT_TITLE = "Codex Blender Agent"
 CLIENT_VERSION = ADDON_VERSION

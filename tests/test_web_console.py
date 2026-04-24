@@ -264,6 +264,7 @@ def test_web_console_basic_api_and_control_handler() -> None:
             ("api/repair-plan", "repair_plan"),
             ("api/overlays", "overlays"),
             ("api/logs", "logs"),
+            ("api/command-center", "command_center"),
             ("api/capabilities", "capabilities"),
             ("api/runs", "runs"),
         ]:
@@ -411,6 +412,7 @@ def test_web_console_exposes_observability_sections_and_run_payloads() -> None:
         assert status_code == 200
         assert "Live Review Console" in html_body
         for section_id in [
+            'command-center',
             'live-status',
             'prompt-timeline',
             'action-feed',
@@ -427,6 +429,11 @@ def test_web_console_exposes_observability_sections_and_run_payloads() -> None:
         assert "Apply safe repair" in html_body
         assert "live: '/api/live'" in html_body
         assert "capabilities: '/api/capabilities'" in html_body
+        assert "command: '/api/command-center'" in html_body
+        assert "AI Command Center" in html_body
+        assert "Readiness Checklist" in html_body
+        assert "What AI Can Do Now" in html_body
+        assert "Model ready" in html_body
         assert "Capabilities" in html_body
         assert "setInterval(() => load(false), LIVE_REFRESH_MS)" in html_body
         assert "Promise.all(keys.map" not in html_body
@@ -446,6 +453,7 @@ def test_web_console_exposes_observability_sections_and_run_payloads() -> None:
         run_status, _, run_payload = _request_json(started.url, f"api/runs/run-1?token={quote(started.token)}")
         critic_status, _, critic_payload = _request_json(started.url, f"api/critic?token={quote(started.token)}")
         capabilities_status, _, capabilities_payload = _request_json(started.url, f"api/capabilities?token={quote(started.token)}")
+        command_status, _, command_payload = _request_json(started.url, f"api/command-center?token={quote(started.token)}")
 
         assert live_status == 200
         assert live_payload["sequence"] == 7
@@ -476,6 +484,8 @@ def test_web_console_exposes_observability_sections_and_run_payloads() -> None:
         assert capabilities_status == 200
         assert capabilities_payload["capabilities"][0]["id"] == "image_generation"
         assert capabilities_payload["tool_events"][0]["label"] == "Tool running: validate_gpt_asset"
+        assert command_status == 200
+        assert "command_center" in command_payload
     finally:
         server.stop()
 

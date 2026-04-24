@@ -10,6 +10,7 @@ class FallbackPreferences:
         self.codex_command = default_codex_command()
         self.codex_home = default_codex_home()
         self.workspace_root = ""
+        self.selected_model_id = ""
         self.auto_setup_dashboard_workspace = False
         self.enable_operator_bridge = True
         self.enable_python_execution = False

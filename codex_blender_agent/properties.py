@@ -177,6 +177,18 @@ class CODEXBLENDERAGENT_ToolActivityItem(PropertyGroup):
     action_id: StringProperty(name="Action ID")
 
 
+class CODEXBLENDERAGENT_WorkflowActionItem(PropertyGroup):
+    action_id: StringProperty(name="Workflow Action ID")
+    lane: StringProperty(name="Lane")
+    label: StringProperty(name="Label")
+    operator: StringProperty(name="Operator")
+    description: StringProperty(name="Description")
+    status: StringProperty(name="Status")
+    reason: StringProperty(name="Reason")
+    risk: StringProperty(name="Risk")
+    enabled: BoolProperty(name="Enabled", default=False)
+
+
 def _register_window_manager_properties() -> None:
     WindowManager.codex_blender_prompt = StringProperty(
         name="Prompt",
@@ -188,6 +200,21 @@ def _register_window_manager_properties() -> None:
         description="Codex/GPT model to use for the next turn.",
         items=_model_items,
     )
+    WindowManager.codex_blender_model_ready = BoolProperty(
+        name="Model ready",
+        description="True when a selected model is loaded before prompt submission.",
+        default=False,
+    )
+    WindowManager.codex_blender_model_status = StringProperty(
+        name="Model status",
+        description="Human-readable model/loading state shown in the command center.",
+        default="Start / Refresh Models to load model choices.",
+    )
+    WindowManager.codex_blender_model_error = StringProperty(
+        name="Model refresh error",
+        description="Last model refresh failure.",
+        default="",
+    )
     WindowManager.codex_blender_effort = EnumProperty(
         name="Reasoning",
         description="Reasoning effort for the next turn.",
@@ -198,6 +225,24 @@ def _register_window_manager_properties() -> None:
             ("xhigh", "Extra High", "Maximum reasoning depth."),
         ],
         default=DEFAULT_REASONING_EFFORT,
+    )
+    WindowManager.codex_blender_ui_help_topic = StringProperty(
+        name="Help topic",
+        description="Current inline command-center help topic.",
+        default="overview",
+    )
+    WindowManager.codex_blender_current_lane = EnumProperty(
+        name="Workflow lane",
+        description="Current guided workflow lane.",
+        items=[
+            ("setup", "Setup", "Start service, login, and load models."),
+            ("ask", "Ask", "Ask or inspect before making changes."),
+            ("build", "Build", "Create or modify Blender content."),
+            ("review", "Review", "Review active work, screenshots, receipts, and validation."),
+            ("assets", "Assets", "Save or reuse generated assets."),
+            ("recover", "Recover", "Undo, recover, or diagnose failed work."),
+        ],
+        default="ask",
     )
     WindowManager.codex_blender_include_scene_context = BoolProperty(
         name="Include scene summary",
@@ -448,6 +493,8 @@ def _register_window_manager_properties() -> None:
     WindowManager.codex_blender_projects = CollectionProperty(type=CODEXBLENDERAGENT_ProjectItem)
     WindowManager.codex_blender_threads = CollectionProperty(type=CODEXBLENDERAGENT_ThreadItem)
     WindowManager.codex_blender_actions = CollectionProperty(type=CODEXBLENDERAGENT_ActionItem)
+    WindowManager.codex_blender_workflow_actions = CollectionProperty(type=CODEXBLENDERAGENT_WorkflowActionItem)
+    WindowManager.codex_blender_workflow_action_index = IntProperty(name="Workflow action index", default=-1, min=-1)
     WindowManager.codex_blender_dashboard_state = CollectionProperty(type=CODEXBLENDERAGENT_DashboardState)
     WindowManager.codex_blender_messages = CollectionProperty(type=CODEXBLENDERAGENT_Message)
     WindowManager.codex_blender_message_index = IntProperty(default=-1)
@@ -628,7 +675,12 @@ def _unregister_window_manager_properties() -> None:
     names = [
         "codex_blender_prompt",
         "codex_blender_model",
+        "codex_blender_model_ready",
+        "codex_blender_model_status",
+        "codex_blender_model_error",
         "codex_blender_effort",
+        "codex_blender_ui_help_topic",
+        "codex_blender_current_lane",
         "codex_blender_include_scene_context",
         "codex_blender_chat_mode",
         "codex_blender_intent",
@@ -710,6 +762,8 @@ def _unregister_window_manager_properties() -> None:
         "codex_blender_projects",
         "codex_blender_threads",
         "codex_blender_actions",
+        "codex_blender_workflow_actions",
+        "codex_blender_workflow_action_index",
         "codex_blender_dashboard_state",
         "codex_blender_messages",
         "codex_blender_message_index",
@@ -775,6 +829,7 @@ CLASSES = (
     CODEXBLENDERAGENT_PinnedOutput,
     CODEXBLENDERAGENT_JobTimelineItem,
     CODEXBLENDERAGENT_ToolActivityItem,
+    CODEXBLENDERAGENT_WorkflowActionItem,
 )
 
 

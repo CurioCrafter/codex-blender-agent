@@ -46,6 +46,10 @@ def test_image_generation_tools_have_expected_policy_and_specs() -> None:
     assert classify_tool("list_codex_capabilities").requires_action is False
     assert classify_tool("list_live_ai_activity").requires_action is False
     assert classify_tool("run_addon_health_check").requires_action is False
+    assert classify_tool("list_model_state").requires_action is False
+    assert classify_tool("refresh_model_state").requires_action is False
+    assert classify_tool("list_ui_explanation_context").requires_action is False
+    assert classify_tool("list_available_workflows").requires_action is False
     assert classify_tool("create_image_generation_brief").requires_action is False
     assert classify_tool("register_generated_image_asset").requires_action is True
     assert classify_tool("register_generated_image_asset").category == "external_write"

@@ -4,19 +4,21 @@ This is the first 10 minutes guide for the add-on. It is written for someone who
 
 ## Game Creator Fast Start
 
-The shortest path is now the View3D `AI` N-panel. Type in `Ask AI`, click `Send`, or choose a quick start such as `Game-ready prop`, `Stylized material`, `Improve with screenshots`, `Clean for export`, or `Teach first asset`.
+The shortest path is now the View3D `AI` N-panel. Start at `AI Command Center`, click `Start / Refresh Models`, choose the model and reasoning effort, then type in `Ask AI`, click `Send`, or choose a practical workflow such as `Explain Scene`, `Fix Selected`, `Make Game Asset`, `Generate Reference Image`, `Review With Screenshots`, `Save As Reusable Asset`, or `Recover Last Change`.
+
+The model selector is intentionally above the prompt. Refreshing models starts Codex and loads account/model state without submitting any prompt; the selected model is restored next session when available.
 
 Use `fast` execution friction for normal game creation. Local reversible/additive Blender work runs directly and leaves a receipt with recovery. Broad, destructive, package, external-write, generic operator-bridge, and critical actions still ask for approval.
 
 Use `Improve with screenshots` when the result needs visual iteration. The add-on runs a creator pass, captures local viewport screenshots from planned viewpoints, sends those screenshots back to the critic phase in the same thread, then repeats with the critic's next prompt until the score target or pass limit is reached. The current task card shows phase, pass count, score, Stop, Continue, and View screenshots.
 
-Use `What AI Is Doing` when you want visibility. It shows the latest prompt routing, tool calls, approvals, image briefs, validation, and review-loop events without digging through the raw transcript.
+Use `AI Flight Recorder` and `What AI Is Doing` when you want visibility. They show the current step, active tool, why it is running, what it can affect, elapsed time, and the next expected step without digging through raw JSON.
 
 Open `Workflow` only when you want to inspect or edit an AI-generated graph. New graphs are blank or unconnected unless you explicitly create an example. Open `Assets` when you want to search, reuse, validate, publish, or package reusable assets.
 
 ## 1. Install And Open
 
-1. Install `codex_blender_agent.zip` in Blender 4.5.8 from this repo's root folder, for example:
+1. Install `codex_blender_agent.zip` in Blender 4.5.9 LTS from this repo's root folder, for example:
    `%CD%\codex_blender_agent.zip`
 2. Enable the add-on.
 3. Confirm the extension is installed under:
@@ -50,12 +52,14 @@ Open `Workflow` only when you want to inspect or edit an AI-generated graph. New
 ## 3. First Prompt
 
 1. Open `AI Studio`.
-2. Set the visible scope to something small, such as `Selection`.
-3. Attach an image or file if it helps the task.
-4. Write a short prompt that names the result you want.
-5. Use either `Send Draft` or Blender's Text Editor `Run Script`; both read the prompt body from `Codex Prompt Draft`.
-6. If the task changes the scene, writes files, imports assets, exports, or runs a workflow, create or review the action card first.
-7. Approve the action only after checking affected targets, risk, preview, tool activity, and recovery.
+2. In `Readiness Checklist`, confirm online access, service, login, model availability, web console, scope, and assets.
+3. Click `Start / Refresh Models` if `Model ready` is not green.
+4. Set the visible scope to something small, such as `Selection`.
+5. Attach an image or file if it helps the task.
+6. Write a short prompt that names the result you want.
+7. Use either `Send Draft` or Blender's Text Editor `Run Script`; both read the prompt body from `Codex Prompt Draft`.
+8. If the task changes the scene, writes files, imports assets, exports, or runs a workflow, create or review the action card first.
+9. Approve the action only after checking affected targets, risk, preview, tool activity, and recovery.
 
 Example:
 
@@ -90,7 +94,7 @@ The workflow is intentionally visible.
 7. `Pinned Output` keeps useful results visible after the transcript scrolls away.
 8. `Workflow Graph` is for repeatable procedures that you want to run again later.
 
-Live visibility is now split into fast and heavy paths: the `What AI Is Doing` feed and web console `/api/live` update active tools quickly, while transcripts, assets, screenshots, and raw JSON load only when their heavier panels need them.
+Live visibility is now split into fast and heavy paths: the `AI Flight Recorder`, `What AI Is Doing` feed, and web console `/api/live` update active tools quickly, while transcripts, assets, screenshots, and raw JSON load only when their heavier panels need them.
 
 The product rule is now low-friction: chat drives normal game-creation work, receipts record what changed, approval cards handle risky work, and recovery stays visible.
 

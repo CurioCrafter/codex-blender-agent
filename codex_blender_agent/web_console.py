@@ -217,6 +217,7 @@ class _ConsoleHandler(BaseHTTPRequestHandler):
             "/api/screenshots",
             "/api/logs",
             "/api/timeline",
+            "/api/command-center",
             "/api/capabilities",
             "/api/critic",
             "/api/raw",
@@ -334,6 +335,13 @@ def _section_payload(state: dict[str, Any], section: str) -> dict[str, Any]:
         return {"logs": state.get("logs", []), "startup_trace": state.get("startup_trace", []), "backend_error": state.get("backend_error", {})}
     if section == "timeline":
         return {"timeline": state.get("timeline", [])}
+    if section == "command-center":
+        return {
+            "command_center": state.get("command_center", {}),
+            "model_state": state.get("model_state", {}),
+            "available_workflows": state.get("available_workflows", []),
+            "readiness_checklist": state.get("readiness_checklist", []),
+        }
     if section == "capabilities":
         return {
             "capabilities": state.get("capabilities", []),
@@ -518,6 +526,7 @@ img {{ width: 100%; border-radius: 10px; border: 1px solid var(--line); backgrou
   </section>
 </main>
 <template id="live-page-skeleton">
+  <section id="command-center"></section>
   <section id="live-status"></section>
   <section id="prompt-timeline"></section>
   <section id="action-feed"></section>
@@ -543,6 +552,7 @@ const SECTION_ENDPOINTS = {{
   critic: '/api/critic',
   logs: '/api/logs',
   timeline: '/api/timeline',
+  command: '/api/command-center',
   capabilities: '/api/capabilities',
   runs: '/api/runs',
   raw: '/api/raw',
@@ -558,11 +568,13 @@ const TABS = [
   ['repair', 'Repair Plan'],
   ['critic', 'Critic'],
   ['timeline', 'Timeline'],
+  ['command', 'AI Command Center'],
   ['capabilities', 'Capabilities'],
   ['runs', 'Runs'],
   ['raw', 'Raw JSON'],
 ];
 const SECTIONS = [
+  ['command-center', 'AI Command Center'],
   ['live-status', 'Live Status'],
   ['prompt-timeline', 'Prompt Timeline'],
   ['action-feed', 'Codex Action Feed'],
@@ -590,6 +602,7 @@ const TAB_ENDPOINT_KEYS = {{
   repair: 'repair',
   critic: 'critic',
   timeline: 'timeline',
+  command: 'command',
   capabilities: 'capabilities',
   runs: 'runs',
   raw: 'raw',
@@ -609,6 +622,52 @@ function issueClass(sev) {{ return sev === 'critical' || sev === 'high' ? 'bad' 
 function pill(text, klass='') {{ return '<span class="pill ' + klass + '">' + esc(text) + '</span>'; }}
 function sectionBlock(id, title, body, subtitle='') {{
   return '<section class="section-block" id="' + id + '"><div class="card"><h2>' + esc(title) + '</h2>' + (subtitle ? '<div class="muted" style="margin-bottom:8px;">' + esc(subtitle) + '</div>' : '') + body + '</div></section>';
+}}
+function renderCommandCenter(state) {{
+  const center = state.command_center || {{}};
+  const model = center.model_state || state.model_state || {{}};
+  const readiness = center.readiness_checklist || state.readiness_checklist || [];
+  const workflows = center.available_workflows || state.available_workflows || [];
+  const lanes = center.lanes || [];
+  const laneHtml = lanes.length ? '<div class="row">' + lanes.map(lane => pill((lane.selected ? '> ' : '') + (lane.label || lane.id || 'lane'), lane.selected ? 'good' : '')).join('') + '</div>' : '<span class="muted">No lane data yet.</span>';
+  const checklistHtml = readiness.length ? '<div class="feed">' + readiness.map(item => `
+    <div class="card">
+      <div class="row">${{pill(item.label || item.id || 'check', item.status === 'ready' ? 'good' : (item.status === 'warning' ? 'warn' : 'bad'))}}${{pill(item.status || '')}}</div>
+      <div>${{esc(item.detail || '')}}</div>
+      <div class="muted">${{esc(item.recovery || '')}}</div>
+    </div>`).join('') + '</div>' : '<div class="card muted">No readiness checklist yet.</div>';
+  const workflowHtml = workflows.length ? '<div class="feed">' + workflows.map(action => `
+    <div class="card">
+      <div class="row">
+        ${{pill(action.lane || 'ask')}}
+        ${{pill(action.risk || 'low', action.risk === 'high' || action.risk === 'critical' ? 'warn' : 'good')}}
+        ${{pill(action.enabled ? 'ready' : 'blocked', action.enabled ? 'good' : 'bad')}}
+      </div>
+      <div><b>${{esc(action.label || action.id || 'workflow')}}</b></div>
+      <div class="muted">${{esc(action.description || '')}}</div>
+      <div class="${{action.enabled ? 'muted' : 'warn'}}">${{esc(action.reason || '')}}</div>
+    </div>`).join('') + '</div>' : '<div class="card muted">No workflow recommendations yet.</div>';
+  return `
+    <div class="grid">
+      <div class="card">
+        <h3>Current Model</h3>
+        <div class="kv">
+          <div>Model ready</div><div>${{model.model_ready ? '<span class="ok">YES</span>' : '<span class="bad">NO</span>'}}</div>
+          <div>Selected</div><div>${{esc(model.selected_label || model.selected_model || 'none')}}</div>
+          <div>Loaded</div><div>${{esc(model.model_count ?? ((model.loaded_models || []).length || 0))}}</div>
+          <div>Why unavailable</div><div>${{esc(model.unavailable_reason || '')}}</div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Workflow Lanes</h3>
+        ${{laneHtml}}
+      </div>
+    </div>
+    <div class="grid" style="margin-top:12px;">
+      <div class="card"><h3>Readiness Checklist</h3>${{checklistHtml}}</div>
+      <div class="card"><h3>What AI Can Do Now</h3>${{workflowHtml}}</div>
+    </div>
+  `;
 }}
 function renderLiveStatus(state) {{
   const auto = state.automation || {{}};
@@ -836,6 +895,7 @@ function renderLivePage() {{
     <div class="card" style="margin-top:12px;"><h3>Raw Critic JSON</h3>${{json(critic.raw || critic)}}</div>
   `;
   return [
+    sectionBlock('command-center', 'AI Command Center', renderCommandCenter(state), 'Setup, ask, build, review, assets, and recover in one live view.'),
     sectionBlock('live-status', 'Live Status', renderLiveStatus(state), 'Current automation and service state.'),
     sectionBlock('prompt-timeline', 'Prompt Timeline', renderPromptTimeline(state), 'When the prompt was typed, expanded, and submitted.'),
     sectionBlock('action-feed', 'Codex Action Feed', renderActionFeed(state), 'Chronological labels for what Codex is doing.'),
@@ -874,7 +934,9 @@ function renderOverview() {{
   const runs = state.runs || (state.visual_review || {{}}).runs || {{}};
   const latestIssues = (validation.top_issues || validation.issues || []).slice(0, 6);
   const issueRow = latestIssues.length ? latestIssues.map(i => pill((i.severity || 'low') + ' ' + (i.type || 'issue'), issueClass(i.severity))).join('') : '<span class="muted">No blocking issues.</span>';
+  const commandCenter = sectionCard('AI Command Center', renderCommandCenter(state));
   return `
+    ${{commandCenter}}
     <div class="grid">
       <div class="card">
         <h2>Automation</h2>
@@ -1160,6 +1222,7 @@ function renderPanel() {{
   else if (ACTIVE_TAB === 'repair') html = renderRepair();
   else if (ACTIVE_TAB === 'critic') html = renderCritic();
   else if (ACTIVE_TAB === 'timeline') html = renderTimeline();
+  else if (ACTIVE_TAB === 'command') html = sectionCard('AI Command Center', renderCommandCenter(Object.assign({{}}, DATA.live || {{}}, DATA.command || {{}})));
   else if (ACTIVE_TAB === 'capabilities') html = renderCapabilities();
   else if (ACTIVE_TAB === 'runs') html = renderRuns();
   else html = renderRaw();
@@ -1178,6 +1241,7 @@ function normalizePayload(key, value) {{
   if (key === 'critic') return value.critic || value;
   if (key === 'logs') return value.logs || [];
   if (key === 'timeline') return value.timeline || [];
+  if (key === 'command') return value;
   if (key === 'capabilities') return value;
   if (key === 'runs') return value.runs || value;
   if (key === 'raw') return value.raw || value;

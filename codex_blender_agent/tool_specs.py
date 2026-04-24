@@ -233,6 +233,42 @@ _TOOL_SPECS = [
         },
     },
     {
+        "name": "list_model_state",
+        "description": "Return loaded models, selected model, preferred default, service/login readiness, and why model selection may be unavailable.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "refresh_model_state",
+        "description": "Start or refresh Codex enough to populate available models without submitting a prompt.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "list_ui_explanation_context",
+        "description": "Return labels and explanations for the visible command-center panels, current status, scope, risk, model, and active tool.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "list_available_workflows",
+        "description": "Return context-aware workflow actions the user can run now, including blocked reasons and risk levels.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "list_codex_capabilities",
         "description": "List higher-level Codex capability bridges exposed by the add-on, including image generation handoff, live observability, operator bridge, visual review, and AI Assets memory.",
         "inputSchema": {

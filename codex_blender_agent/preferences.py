@@ -42,6 +42,11 @@ class CODEXBLENDERAGENT_Preferences(AddonPreferences):
         default="",
         subtype="DIR_PATH",
     )
+    selected_model_id: StringProperty(
+        name="Preferred model",
+        description="Last selected Codex/GPT model. The command center restores it after models refresh.",
+        default="",
+    )
     auto_setup_dashboard_workspace: BoolProperty(
         name="Auto-create AI workspaces on load (legacy)",
         description="Legacy compatibility switch. Off by default so Blender Layout is not mutated until Create AI Workspaces is clicked.",
@@ -162,6 +167,7 @@ class CODEXBLENDERAGENT_Preferences(AddonPreferences):
         layout.prop(self, "codex_command")
         layout.prop(self, "codex_home")
         layout.prop(self, "workspace_root")
+        layout.prop(self, "selected_model_id")
         layout.prop(self, "auto_setup_dashboard_workspace")
         layout.prop(self, "enable_operator_bridge")
         layout.prop(self, "enable_python_execution")

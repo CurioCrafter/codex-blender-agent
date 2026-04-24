@@ -5,27 +5,31 @@ This is the first 10 minutes guide for the add-on. The default path is now Game 
 ## 0. Fast Game Creator Path
 
 1. Open the View3D `AI` tab.
-2. Type in `Ask AI` and click `Send`, or choose a quick start.
-3. Use quick prompts such as `Game-ready prop`, `Stylized material`, `Make variants`, `Low-poly prop workflow`, `Clean for export`, and `Teach first asset`.
-4. Let local reversible game-creation work run in `Fast` mode; the add-on records receipts and keeps Blender Undo available.
-5. Expect approval only for broad, destructive, external-write, package, generic operator-bridge, or critical actions.
-6. Watch `What AI Is Doing` for prompt routing, tool calls, approvals, image briefs, validation, and review-loop events.
-7. Use `Generate Image Brief` when you want Codex/ChatGPT image generation; the add-on pins a handoff prompt, then the generated file can be registered as an AI Asset.
-8. Open `Workflow` when you want to inspect an AI-generated graph; new graphs are blank or unconnected unless you explicitly create an example.
-9. Open `Assets` when you want to search, reuse, validate, publish, or package reusable assets.
+2. In `AI Command Center`, click `Start / Refresh Models` before typing a prompt.
+3. Choose the model and reasoning effort above the prompt box; the selected model is persisted when available next session.
+4. Type in `Ask AI` and click `Send`, or choose a practical workflow.
+5. Use workflow buttons such as `Explain Scene`, `Fix Selected`, `Make Game Asset`, `Generate Reference Image`, `Review With Screenshots`, `Save As Reusable Asset`, and `Recover Last Change`.
+6. Let local reversible game-creation work run in `Fast` mode; the add-on records receipts and keeps Blender Undo available.
+7. Expect approval only for broad, destructive, external-write, package, generic operator-bridge, or critical actions.
+8. Watch `AI Flight Recorder` and `What AI Is Doing` for current step, active tool, why it is running, what it can affect, elapsed time, and review-loop events.
+9. Use `Generate Reference Image` or `Generate Image Brief` when you want Codex/ChatGPT image generation; the add-on pins a handoff prompt, then the generated file can be registered as an AI Asset.
+10. Open `Workflow` when you want to inspect an AI-generated graph; new graphs are blank or unconnected unless you explicitly create an example.
+11. Open `Assets` when you want to search, reuse, validate, publish, or package reusable assets.
 
-The live feed is optimized for speed: active tool calls and health status update through a compact observability path, while heavier transcript, asset, screenshot, and raw JSON panels refresh only when needed.
+The live feed is optimized for speed: active tool calls, model readiness, workflow actions, and health status update through a compact observability path, while heavier transcript, asset, screenshot, and raw JSON panels refresh only when needed.
 
 ## 1. Open The AI Studio
 
-1. Install and enable `codex_blender_agent.zip` in Blender 4.5.8 or newer.
+1. Install and enable `codex_blender_agent.zip` in Blender 4.5.9 LTS or newer 4.5.x.
 2. Open the `AI` launcher in the 3D View sidebar.
-3. Click `Create AI Workspaces` to append `AI Studio`, `Workflow`, and `Assets` after Blender's built-in workspace tabs.
-4. Start the Codex service only after Blender online access is enabled.
+3. Click `Start / Refresh Models` to start Codex and populate model choices without submitting a prompt.
+4. Check `Readiness Checklist` for online access, service, login, model availability, web console, scope, and assets.
+5. Click `Create AI Workspaces` to append `AI Studio`, `Workflow`, and `Assets` after Blender's built-in workspace tabs.
+6. Start the Codex service only after Blender online access is enabled.
 
 Expected workspace split:
 
-- `AI Studio` is for orientation, scene readiness, action cards, pinned outputs, live AI/tool activity, image-generation handoffs, and dispatch.
+- `AI Studio` is for the AI Command Center, readiness, model selection, action cards, pinned outputs, live AI/tool activity, image-generation handoffs, and dispatch.
 - `Workflow` is for repeatable node orchestration, preview, run history, and publish handoff.
 - `Assets` is for Blender-native libraries/catalogs, immutable asset versions, previews, package publish/import, toolbox recipes, pins, provenance, and diagnostics.
 

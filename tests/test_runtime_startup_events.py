@@ -88,3 +88,19 @@ def test_dynamic_tool_dispatch_records_visible_tool_events() -> None:
     assert "self._sync_window_manager(context.window_manager, force=True)" not in recorder
     assert "_request_live_sync(heavy=False)" in recorder
     assert "record_tool_event" in recorder
+
+
+def test_model_refresh_is_independent_from_prompt_submission() -> None:
+    runtime_source = (ROOT / "codex_blender_agent" / "runtime.py").read_text(encoding="utf-8")
+    operators_source = (ROOT / "codex_blender_agent" / "operators.py").read_text(encoding="utf-8")
+    refresh_model_state = _method_source(runtime_source, "refresh_model_state")
+    operator = operators_source[
+        operators_source.index("class CODEXBLENDERAGENT_OT_refresh_model_state") : operators_source.index(
+            "\n\nclass CODEXBLENDERAGENT_OT_run_recommended_workflow"
+        )
+    ]
+
+    assert "self.service.refresh_models()" in refresh_model_state
+    assert "self.service.send_prompt" not in refresh_model_state
+    assert "codex_blender_prompt" not in operator
+    assert "get_runtime().refresh_model_state(context)" in operator

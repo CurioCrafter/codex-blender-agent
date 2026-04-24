@@ -29,6 +29,7 @@ from .chat_surfaces import (
     write_prompt_draft_body,
     write_transcript,
 )
+from .command_center import command_center_payload
 from .codex_capabilities import build_image_generation_brief, list_codex_capabilities, render_image_generation_brief
 from .constants import ADDON_ID, ADDON_VERSION, MAX_VISIBLE_MESSAGES, short_thread_id
 from .core.service import CodexService
@@ -515,7 +516,121 @@ class BlenderAddonRuntime:
         self.start(context, refresh_service_state=False)
         self.service.refresh_account()
         self.service.refresh_models()
+        self._resolve_model_choice(context, getattr(context.window_manager, "codex_blender_model", ""))
+        self._sync_command_center_window_manager(context, context.window_manager, self.service.snapshot())
         self._update_web_console_cache(context)
+
+    def list_model_state(self, context: bpy.types.Context) -> dict[str, Any]:
+        snapshot = self.service.snapshot()
+        wm = getattr(context, "window_manager", None)
+        preferences = self._preferences(context)
+        models = [
+            {
+                "id": model.model_id,
+                "model_id": model.model_id,
+                "label": model.label or model.model_id,
+                "description": model.description,
+                "default_effort": model.default_effort,
+                "supports_images": bool(model.supports_images),
+                "is_default": bool(model.is_default),
+            }
+            for model in snapshot.models
+        ]
+        valid_ids = {item["id"] for item in models}
+        requested = str(getattr(wm, "codex_blender_model", "") if wm is not None else "")
+        persisted = str(getattr(preferences, "selected_model_id", "") or "")
+        preferred = preferred_model_id(snapshot.models)
+        selected = requested if requested in valid_ids else persisted if persisted in valid_ids else preferred
+        selected_row = next((item for item in models if item["id"] == selected), {})
+        model_ready = bool(selected and selected in valid_ids)
+        if not self.service.is_running():
+            unavailable = "Codex service is stopped. Click Start / Refresh Models."
+        elif not snapshot.account:
+            unavailable = "Login is not confirmed. Use Login / Re-login, then refresh models."
+        elif not models:
+            unavailable = "No models are loaded yet. Click Start / Refresh Models."
+        elif not model_ready:
+            unavailable = "The selected model is not in the loaded model list."
+        else:
+            unavailable = ""
+        return {
+            "loaded_models": models,
+            "model_count": len(models),
+            "selected_model": selected,
+            "selected_label": str(selected_row.get("label", selected)),
+            "preferred_default": preferred,
+            "persisted_model": persisted,
+            "model_ready": model_ready,
+            "service_running": self.service.is_running(),
+            "service_status": snapshot.status_text,
+            "account": snapshot.account.email if snapshot.account else "",
+            "plan": snapshot.account.plan_type if snapshot.account else "",
+            "reasoning_effort": str(getattr(wm, "codex_blender_effort", DEFAULT_REASONING_EFFORT) if wm is not None else DEFAULT_REASONING_EFFORT),
+            "unavailable_reason": unavailable,
+        }
+
+    def refresh_model_state(self, context: bpy.types.Context) -> dict[str, Any]:
+        wm = context.window_manager
+        if hasattr(wm, "codex_blender_model_status"):
+            wm.codex_blender_model_status = "Refreshing models..."
+        if hasattr(wm, "codex_blender_model_error"):
+            wm.codex_blender_model_error = ""
+        self.record_automation_event(
+            context,
+            actor="runtime",
+            phase="model_refresh",
+            status="running",
+            label="REFRESHING MODELS",
+            summary="Starting Codex if needed and loading account/model state before prompting.",
+            update_cache=False,
+        )
+        try:
+            self.start(context, refresh_service_state=False)
+            self.service.refresh_account()
+            self.service.refresh_models()
+            selected = self._resolve_model_choice(context, getattr(wm, "codex_blender_model", ""))
+            if selected:
+                self._persist_selected_model(context, selected)
+            state = self.list_model_state(context)
+            if hasattr(wm, "codex_blender_model_ready"):
+                wm.codex_blender_model_ready = bool(state.get("model_ready"))
+            if hasattr(wm, "codex_blender_model_status"):
+                wm.codex_blender_model_status = (
+                    f"Model ready: {state.get('selected_label')}"
+                    if state.get("model_ready")
+                    else str(state.get("unavailable_reason", "No model ready."))
+                )
+            self.record_automation_event(
+                context,
+                actor="runtime",
+                phase="model_refresh",
+                status="completed" if state.get("model_ready") else "failed",
+                label="MODELS READY" if state.get("model_ready") else "MODELS NOT READY",
+                summary=str(state.get("selected_label") or state.get("unavailable_reason") or "Model state refreshed."),
+                update_cache=False,
+            )
+            self._sync_command_center_window_manager(context, wm, self.service.snapshot())
+            self._request_live_sync(heavy=True)
+            self._update_web_console_cache(context)
+            return state
+        except Exception as exc:
+            if hasattr(wm, "codex_blender_model_ready"):
+                wm.codex_blender_model_ready = False
+            if hasattr(wm, "codex_blender_model_error"):
+                wm.codex_blender_model_error = str(exc)
+            if hasattr(wm, "codex_blender_model_status"):
+                wm.codex_blender_model_status = "Model refresh failed."
+            self.record_automation_event(
+                context,
+                actor="runtime",
+                phase="model_refresh",
+                status="failed",
+                label="MODEL REFRESH FAILED",
+                summary=str(exc),
+                update_cache=False,
+            )
+            self._request_live_sync(heavy=False)
+            raise
 
     def login(self, context: bpy.types.Context) -> str:
         self.start(context, refresh_service_state=False)
@@ -2611,6 +2726,8 @@ class BlenderAddonRuntime:
         sequence = max(int(self._observability.sequence), int(self._web_console_sequence), int(self._last_live_sequence))
         self._last_live_sequence = sequence
         health = self.run_addon_health_check(context, lightweight=True)
+        model_state = self.list_model_state(context)
+        command_center = command_center_payload(self._command_center_state(context, model_state=model_state))
         return {
             "version": ADDON_VERSION,
             "module_file": str(Path(__file__).resolve()),
@@ -2643,6 +2760,10 @@ class BlenderAddonRuntime:
             "active_tool_events": active_tools,
             "observability": self._observability.as_dict(),
             "addon_health": health,
+            "model_state": model_state,
+            "command_center": command_center,
+            "available_workflows": command_center.get("available_workflows", []),
+            "readiness_checklist": command_center.get("readiness_checklist", []),
             "validation": cached_validation,
             "backend_error": self._web_console_cache.get("backend_error", {}) if isinstance(self._web_console_cache, dict) else {},
         }
@@ -2657,7 +2778,62 @@ class BlenderAddonRuntime:
             "sequence": self._web_console_live_cache.get("sequence", 0),
             "web_console": self._web_console_live_cache.get("web_console", {}),
             "addon_health": self._web_console_live_cache.get("addon_health", {}),
+            "command_center": self._web_console_live_cache.get("command_center", {}),
         }
+
+    def list_ui_explanation_context(self, context: bpy.types.Context) -> dict[str, Any]:
+        return self._command_center_payload(context).get("explanations", {})
+
+    def list_available_workflows(self, context: bpy.types.Context) -> dict[str, Any]:
+        payload = self._command_center_payload(context)
+        return {
+            "current_lane": payload.get("current_lane", "ask"),
+            "lanes": payload.get("lanes", []),
+            "actions": payload.get("available_workflows", []),
+            "readiness_checklist": payload.get("readiness_checklist", []),
+        }
+
+    def _command_center_state(self, context: bpy.types.Context, *, model_state: dict[str, Any] | None = None) -> dict[str, Any]:
+        wm = context.window_manager
+        snapshot = self.service.snapshot()
+        web_state = self.web_console_state(None)
+        active_tools = self._observability.active_tool_events()
+        selected = list(getattr(context, "selected_objects", []) or [])
+        scene = getattr(context, "scene", None)
+        scene_objects = getattr(scene, "objects", []) if scene is not None else []
+        workspace = getattr(getattr(context, "window", None), "workspace", None)
+        model = dict(model_state or self.list_model_state(context))
+        return {
+            "model_state": model,
+            "online_access": bool(getattr(bpy.app, "online_access", True)),
+            "service_running": bool(model.get("service_running", self.service.is_running())),
+            "service_status": snapshot.status_text,
+            "account": snapshot.account.email if snapshot.account else "",
+            "selected_model_label": model.get("selected_label", ""),
+            "model_ready": bool(model.get("model_ready")),
+            "unavailable_reason": model.get("unavailable_reason", ""),
+            "web_console_running": bool(web_state.get("running", False)),
+            "active_scope": str(getattr(wm, "codex_blender_active_scope", "selection") or "selection"),
+            "selected_count": len(selected),
+            "has_selection": bool(selected),
+            "selected_mesh_count": sum(1 for obj in selected if str(getattr(obj, "type", "")) == "MESH"),
+            "scene_object_count": len(scene_objects),
+            "has_prompt": bool(str(getattr(wm, "codex_blender_prompt", "") or "").strip()),
+            "has_attachments": bool(len(getattr(wm, "codex_blender_attachments", []) or [])),
+            "action_count": len(getattr(wm, "codex_blender_action_cards", []) or []),
+            "failed_action_count": sum(1 for card in getattr(wm, "codex_blender_action_cards", []) or [] if str(getattr(card, "status", "")) == "failed"),
+            "asset_count": len(getattr(wm, "codex_blender_asset_items", []) or []),
+            "asset_library_ready": bool(str(getattr(wm, "codex_blender_ai_assets_health", "") or "")),
+            "asset_focus": str(getattr(wm, "codex_blender_current_lane", "") or "") == "assets",
+            "pending": bool(snapshot.turn_in_progress),
+            "active_tool_count": len(active_tools),
+            "active_tool": active_tools[0] if active_tools else {},
+            "last_error": snapshot.last_error,
+            "workspace": str(getattr(workspace, "name", "") or "Current Blender workspace"),
+        }
+
+    def _command_center_payload(self, context: bpy.types.Context) -> dict[str, Any]:
+        return command_center_payload(self._command_center_state(context))
 
     def run_addon_health_check(self, context: bpy.types.Context, *, lightweight: bool = False) -> dict[str, Any]:
         snapshot = self.service.snapshot()
@@ -2679,6 +2855,7 @@ class BlenderAddonRuntime:
             web_state = self._web_console.status().as_public_dict()
             web_state["auto_started"] = bool(self._web_console_auto_started)
         observability = self._observability.as_dict()
+        model_state = self.list_model_state(context)
         warnings = []
         online_access = bool(getattr(bpy.app, "online_access", True))
         if not online_access:
@@ -2687,6 +2864,8 @@ class BlenderAddonRuntime:
             warnings.append(str(web_state.get("error")))
         if manifest_version and manifest_version != ADDON_VERSION:
             warnings.append(f"Manifest version {manifest_version} differs from constants version {ADDON_VERSION}.")
+        if not model_state.get("model_ready"):
+            warnings.append(str(model_state.get("unavailable_reason") or "Model list is not ready."))
         if observability.get("active_tool_count", 0) and not snapshot.turn_in_progress:
             warnings.append("Tool activity is active while the service does not report a turn in progress.")
         payload = {
@@ -2708,6 +2887,7 @@ class BlenderAddonRuntime:
                 "stream_recovering": bool(getattr(snapshot, "stream_recovering", False)),
                 "last_error": snapshot.last_error,
             },
+            "model_state": model_state,
             "web_console": web_state,
             "observability": observability,
             "sync": observability.get("sync", {}),
@@ -2782,6 +2962,10 @@ class BlenderAddonRuntime:
             "automation_events": list(self._automation_events),
             "tool_events": [event for event in self._automation_events if event.get("actor") == "tool"][-80:],
             "capabilities": list_codex_capabilities(),
+            "model_state": {},
+            "command_center": {"title": "AI Command Center", "current_lane": "recover", "lanes": [], "readiness_checklist": [], "available_workflows": [], "explanations": {}},
+            "available_workflows": [],
+            "readiness_checklist": [],
             "logs": logs,
             "startup_trace": self._startup_trace(logs),
             "scene_snapshot": {},
@@ -2883,6 +3067,8 @@ class BlenderAddonRuntime:
         scene_snapshot = self._scene_snapshot_payload(context, validation)
         logs = self._recent_console_logs(context)
         addon_health = self.run_addon_health_check(context, lightweight=True)
+        model_state = self.list_model_state(context)
+        command_center = command_center_payload(self._command_center_state(context, model_state=model_state))
         return {
             "version": ADDON_VERSION,
             "module_file": str(Path(__file__).resolve()),
@@ -2921,6 +3107,10 @@ class BlenderAddonRuntime:
             "active_tool_events": self._observability.active_tool_events(),
             "observability": self._observability.as_dict(),
             "addon_health": addon_health,
+            "model_state": model_state,
+            "command_center": command_center,
+            "available_workflows": command_center.get("available_workflows", []),
+            "readiness_checklist": command_center.get("readiness_checklist", []),
             "capabilities": self._capabilities_with_status(),
             "scene_snapshot": scene_snapshot,
             "visual_review": {
@@ -4233,12 +4423,15 @@ class BlenderAddonRuntime:
         if valid_model_ids:
             current_model = getattr(window_manager, "codex_blender_model", "")
             if current_model not in valid_model_ids:
-                default_model = preferred_model_id(snapshot.models)
+                persisted_model = str(getattr(self._preferences(bpy.context), "selected_model_id", "") or "")
+                default_model = persisted_model if persisted_model in valid_model_ids else preferred_model_id(snapshot.models)
                 window_manager.codex_blender_model = default_model
+                self._persist_selected_model(bpy.context, default_model)
         current_effort = getattr(window_manager, "codex_blender_effort", "")
         resolved_effort = valid_reasoning_effort(current_effort)
         if resolved_effort != current_effort:
             window_manager.codex_blender_effort = resolved_effort
+        self._sync_command_center_window_manager(bpy.context, window_manager, snapshot)
 
         if not getattr(window_manager, "codex_blender_redraw_paused", False) and not getattr(snapshot, "turn_in_progress", False):
             window_manager.codex_blender_messages.clear()
@@ -4248,6 +4441,46 @@ class BlenderAddonRuntime:
                 entry.phase = message.phase
                 entry.status = message.status
                 entry.text = _preview(message.text)
+
+    def _sync_command_center_window_manager(self, context: bpy.types.Context, window_manager: bpy.types.WindowManager, snapshot) -> None:
+        if window_manager is None:
+            return
+        try:
+            model_state = self.list_model_state(context)
+            payload = command_center_payload(self._command_center_state(context, model_state=model_state))
+        except Exception as exc:
+            model_state = {"model_ready": False, "unavailable_reason": str(exc), "selected_label": ""}
+            payload = {"current_lane": "setup", "available_workflows": [], "readiness_checklist": []}
+        if hasattr(window_manager, "codex_blender_model_ready"):
+            window_manager.codex_blender_model_ready = bool(model_state.get("model_ready"))
+        if hasattr(window_manager, "codex_blender_model_status"):
+            status = (
+                f"Model ready: {model_state.get('selected_label')}"
+                if model_state.get("model_ready")
+                else str(model_state.get("unavailable_reason") or "Start / Refresh Models to load model choices.")
+            )
+            window_manager.codex_blender_model_status = status
+        if hasattr(window_manager, "codex_blender_model_error") and model_state.get("model_ready"):
+            window_manager.codex_blender_model_error = ""
+        if hasattr(window_manager, "codex_blender_current_lane"):
+            current_lane = str(payload.get("current_lane") or "ask")
+            try:
+                window_manager.codex_blender_current_lane = current_lane
+            except Exception:
+                pass
+        if hasattr(window_manager, "codex_blender_workflow_actions"):
+            window_manager.codex_blender_workflow_actions.clear()
+            for action in list(payload.get("available_workflows", []) or [])[:12]:
+                entry = window_manager.codex_blender_workflow_actions.add()
+                entry.action_id = str(action.get("id", ""))
+                entry.lane = str(action.get("lane", ""))
+                entry.label = str(action.get("label", ""))
+                entry.operator = str(action.get("operator", ""))
+                entry.description = str(action.get("description", ""))
+                entry.status = str(action.get("status", ""))
+                entry.reason = str(action.get("reason", ""))
+                entry.risk = str(action.get("risk", "low"))
+                entry.enabled = bool(action.get("enabled", False))
 
     def _execute_dynamic_tool(self, context: bpy.types.Context, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         arguments = dict(arguments or {})
@@ -4292,16 +4525,30 @@ class BlenderAddonRuntime:
         valid_model_ids = [model.model_id for model in snapshot.models]
         requested = (requested_model or "").strip()
         if requested and requested != "__none__" and requested in valid_model_ids:
+            self._persist_selected_model(context, requested)
             return requested
         if not valid_model_ids:
             return "" if requested == "__none__" else requested
-        selected = preferred_model_id(snapshot.models)
+        persisted = str(getattr(self._preferences(context), "selected_model_id", "") or "")
+        selected = persisted if persisted in valid_model_ids else preferred_model_id(snapshot.models)
         if selected:
             try:
                 context.window_manager.codex_blender_model = selected
             except Exception:
                 pass
+            self._persist_selected_model(context, selected)
         return selected
+
+    def _persist_selected_model(self, context: bpy.types.Context, model_id: str) -> None:
+        selected = (model_id or "").strip()
+        if not selected or selected == "__none__":
+            return
+        try:
+            preferences = self._preferences(context)
+            if hasattr(preferences, "selected_model_id"):
+                preferences.selected_model_id = selected
+        except Exception:
+            pass
 
     def _resolve_effort_choice(self, context: bpy.types.Context, requested_effort: str) -> str:
         resolved = valid_reasoning_effort(requested_effort) or DEFAULT_REASONING_EFFORT
@@ -4476,6 +4723,18 @@ class BlenderAddonRuntime:
 
         if tool_name == "run_addon_health_check":
             return _tool_success(_json_text(self.run_addon_health_check(context)))
+
+        if tool_name == "list_model_state":
+            return _tool_success(_json_text(self.list_model_state(context)))
+
+        if tool_name == "refresh_model_state":
+            return _tool_success(_json_text(self.refresh_model_state(context)))
+
+        if tool_name == "list_ui_explanation_context":
+            return _tool_success(_json_text(self.list_ui_explanation_context(context)))
+
+        if tool_name == "list_available_workflows":
+            return _tool_success(_json_text(self.list_available_workflows(context)))
 
         if tool_name == "list_codex_capabilities":
             return _tool_success(_json_text(list_codex_capabilities()))

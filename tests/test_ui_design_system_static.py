@@ -60,6 +60,10 @@ def test_game_creator_composer_exposes_model_choice_static_contract():
     assert "codex_blender_prompt" in composer
     assert "codex_blender_model" in composer
     assert "codex_blender_effort" in composer
+    assert composer.index("codex_blender_model") < composer.index("codex_blender_prompt")
+    assert "refresh_model_state" in composer
+    assert "Start / Refresh Models" in composer
+    assert "Model before prompt" in composer
     assert "expand_prompt" in composer
 
 
@@ -93,6 +97,8 @@ def test_v11_ui_operator_ids_are_registered_static_contract():
         "codex_blender_agent.ai_setup_workflow",
         "codex_blender_agent.create_game_asset_from_prompt",
         "codex_blender_agent.create_image_generation_brief",
+        "codex_blender_agent.refresh_model_state",
+        "codex_blender_agent.run_recommended_workflow",
     ):
         assert idname in operators
 
@@ -102,17 +108,48 @@ def test_dashboard_exposes_live_ai_feed_and_codex_capabilities_static_contract()
     live_feed = _function_source(ui_source, "_draw_live_ai_feed")
     capabilities = _function_source(ui_source, "_draw_codex_capability_panel")
     dashboard_home = _function_source(ui_source, "_draw_dashboard_home")
+    current_task = _function_source(ui_source, "_draw_current_task_summary")
 
     assert "What AI Is Doing" in live_feed
     assert "codex_blender_job_timeline" in live_feed
     assert "codex_blender_active_tool_events" in live_feed
     assert "Currently Running Tool" in live_feed
     assert "create_image_generation_brief" in live_feed
+    assert "What AI Can Do Now" in capabilities
     assert "Codex Tool Upgrades" in capabilities
     assert "Generate Image Brief" in capabilities
+    assert "AI Flight Recorder" in current_task
+    assert "Next expected step" in current_task
     assert "_draw_live_ai_feed" in dashboard_home
     assert "_draw_codex_capability_panel" in dashboard_home
+    assert "_draw_command_lanes" in dashboard_home
+    assert "_draw_readiness_checklist" in dashboard_home
     assert "Live health" in ui_source
+
+
+def test_command_center_ui_exposes_readiness_and_workflow_actions_static_contract():
+    ui_source = (ROOT / "codex_blender_agent" / "ui.py").read_text(encoding="utf-8")
+    lanes = _function_source(ui_source, "_draw_command_lanes")
+    readiness = _function_source(ui_source, "_draw_readiness_checklist")
+    workflows = _function_source(ui_source, "_draw_available_workflows")
+    quick = _function_source(ui_source, "_draw_quick_prompts")
+
+    assert "AI Command Center" in lanes
+    assert "Setup" in lanes and "Recover" in lanes
+    assert "Readiness Checklist" in readiness
+    assert "Model ready" in readiness
+    assert "Start / Refresh Models" in readiness
+    assert "run_recommended_workflow" in workflows
+    for label in (
+        "Explain Scene",
+        "Fix Selected",
+        "Make Game Asset",
+        "Generate Reference Image",
+        "Review With Screenshots",
+        "Save As Reusable Asset",
+        "Recover Last Change",
+    ):
+        assert label in quick
 
 
 def test_action_card_draw_uses_design_system_actions():

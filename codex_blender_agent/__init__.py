@@ -3,7 +3,7 @@ from __future__ import annotations
 bl_info = {
     "name": "Codex Blender Agent",
     "author": "OpenAI Codex",
-    "version": (0, 15, 3),
+    "version": (0, 16, 0),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > AI",
     "description": "Use Codex as a chat-first Blender game-creation assistant with optional Workflow and Assets workspaces.",

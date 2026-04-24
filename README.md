@@ -2,7 +2,7 @@
 
 `Codex Blender Agent` is a Blender add-on that uses the local `codex app-server` process as its model backend. It reuses your existing Codex CLI/Desktop ChatGPT login, provides an in-Blender chat panel, sends scene context plus optional attachments, exposes structured Blender tools, and includes a full Blender operator bridge so Codex can call `bpy.ops` tools across Blender editor surfaces.
 
-The current AI Studio work targets Blender 4.5.x, including Blender 4.5.8.
+The current AI Studio work targets Blender 4.5.x, including Blender 4.5.9 LTS.
 
 V13 adds visual self-review for game creation. From the View3D `AI` N-panel, `Improve with screenshots` lets the assistant create or improve the scene, capture local viewport screenshots from multiple viewpoints, critique the result in the same thread, generate the next prompt, and repeat until the target score or pass cap is reached.
 
@@ -42,10 +42,13 @@ V14 improves observability and Codex capability handoffs. Dynamic tool calls now
 
 V15 makes live observability cheaper and clearer. Tool calls now flow through a compact observability spine with active-tool tracking, debounced dashboard sync, faster `/api/live` polling, lazy web-console heavy tabs, and addon health diagnostics.
 
+V16 adds the AI Command Center usability pass. Model and reasoning controls now appear before the prompt, `Start / Refresh Models` loads selectable models without sending a prompt, the chosen model persists across sessions, and the UI/web console show setup, ask, build, review, assets, and recover lanes with a readiness checklist and context-aware workflow actions.
+
 ## What It Does
 
 - Reuses local Codex/ChatGPT credentials through `codex app-server`.
 - Lists available GPT/Codex models from the authenticated account.
+- Lets you start/refresh model state and choose a model before typing or sending a prompt.
 - Provides a compact `AI` tab in the 3D View sidebar.
 - Persists the latest local chat snapshot under Blender's user config directory.
 - Keeps separate thread/history lanes for Scene Agent, Chat Only, Toolbox, and Assets modes.
@@ -64,6 +67,7 @@ V15 makes live observability cheaper and clearer. Tool calls now flow through a 
 - Provides native `Codex Prompt Draft`, `Codex Chat Transcript`, and `Codex Activity Log` text blocks for multiline chat work.
 - Exposes structured dynamic tools for scene reads, edits, import/export, rigs, animation, materials, and toolbox recipes.
 - Exposes `list_live_ai_activity` and `run_addon_health_check` so Codex can inspect active tools, recent tool events, sync timing, install health, service state, and web-console status.
+- Exposes `list_model_state`, `refresh_model_state`, `list_ui_explanation_context`, and `list_available_workflows` for model readiness, inline explanations, and context-aware workflow buttons.
 - Exposes callable `Codex AI Workflow` node graphs for scene snapshots, selection, thread memory, tool calls, toolbox recipes, asset search, approval gates, prompts, and asset publishing.
 - Keeps `Workflow` focused on AI-managed orchestration: new graphs are blank or unconnected by default, and starter/example graphs are explicit.
 - Exposes the full Blender `bpy.ops` operator system through a context-aware bridge.
@@ -182,6 +186,10 @@ Dashboard, memory, and surface targeting:
 - `list_studio_context`
 - `list_dashboard_context`
 - `list_codex_capabilities`
+- `list_model_state`
+- `refresh_model_state`
+- `list_ui_explanation_context`
+- `list_available_workflows`
 - `create_image_generation_brief`
 - `register_generated_image_asset`
 - `list_ai_scope`

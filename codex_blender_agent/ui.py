@@ -678,21 +678,130 @@ def _draw_live_ai_feed(layout: bpy.types.UILayout, context: bpy.types.Context, *
 def _draw_codex_capability_panel(layout: bpy.types.UILayout, context: bpy.types.Context, *, compact: bool = False) -> None:
     box = layout.box()
     header = box.row(align=True)
-    header.label(text="Codex Tool Upgrades", icon="TOOL_SETTINGS")
-    header.operator("codex_blender_agent.refresh_toolbox", text="", icon="FILE_REFRESH")
+    header.label(text="What AI Can Do Now", icon="TOOL_SETTINGS")
+    header.operator("codex_blender_agent.refresh_dashboard", text="", icon="FILE_REFRESH")
     _draw_wrapped_text(
         box,
-        "Use Codex beyond chat: generate image briefs, capture review views, inspect Blender operators, and register generated references as AI Assets.",
+        "Codex Tool Upgrades are now grouped into context-aware actions: explain, fix, build, review, Generate Image Brief references, save assets, and recover.",
         width=72 if compact else 96,
     )
+    if len(getattr(context.window_manager, "codex_blender_workflow_actions", [])):
+        _draw_available_workflows(box, context, compact=compact)
+        return
     row = box.row(align=True)
-    row.operator("codex_blender_agent.create_image_generation_brief", text="Generate Image Brief", icon="IMAGE_DATA")
-    row.operator("codex_blender_agent.capture_visual_review_viewpoints", text="Capture Views", icon="CAMERA_DATA")
+    row.operator("codex_blender_agent.explain_current_context", text="Explain Scene", icon="QUESTION")
+    row.operator("codex_blender_agent.create_game_asset_from_prompt", text="Make Game Asset", icon="ASSET_MANAGER")
     row = box.row(align=True)
-    row.operator("codex_blender_agent.open_web_console", text="Live Console", icon="URL")
-    row.operator("codex_blender_agent.open_assets_workspace", text="AI Assets", icon="ASSET_MANAGER")
+    row.operator("codex_blender_agent.create_image_generation_brief", text="Generate Reference Image", icon="IMAGE_DATA")
+    row.operator("codex_blender_agent.start_visual_review_loop", text="Review With Screenshots", icon="CAMERA_DATA")
+    row = box.row(align=True)
+    row.operator("codex_blender_agent.create_asset_publish_action", text="Save As Reusable Asset", icon="ASSET_MANAGER")
+    row.operator("codex_blender_agent.undo_last_ai_change", text="Recover Last Change", icon="FILE_REFRESH")
     if not compact:
-        box.label(text="After external image generation, register the file as an image asset from chat or Assets.")
+        box.label(text="Blocked or risky actions explain why before they run.")
+
+
+def _draw_inline_explanation(layout: bpy.types.UILayout, title: str, body: str, recovery: str = "", *, icon: str = "INFO") -> None:
+    box = layout.box()
+    box.label(text=title, icon=icon)
+    _draw_wrapped_text(box, body, width=92)
+    if recovery:
+        _draw_wrapped_text(box, f"Recovery: {recovery}", width=92)
+
+
+def _draw_command_lanes(layout: bpy.types.UILayout, context: bpy.types.Context, *, compact: bool = False) -> None:
+    wm = context.window_manager
+    lanes = [
+        ("setup", "Setup", "Service, login, models."),
+        ("ask", "Ask", "Explain or plan."),
+        ("build", "Build", "Create or fix content."),
+        ("review", "Review", "Screenshots and receipts."),
+        ("assets", "Assets", "Save and reuse work."),
+        ("recover", "Recover", "Undo or repair."),
+    ]
+    box = layout.box()
+    box.label(text="AI Command Center", icon="WORKSPACE")
+    _draw_wrapped_text(box, "Guided lanes show where you are: setup, prompt, build, review, recover, and reuse assets.", width=72 if compact else 96)
+    current = str(getattr(wm, "codex_blender_current_lane", "ask") or "ask")
+    row = box.row(align=True)
+    for lane_id, label, _summary in lanes:
+        pill = row.row(align=True)
+        pill.alert = lane_id == "recover" and current == lane_id
+        text = f"> {label}" if lane_id == current else label
+        pill.label(text=text, icon="CHECKMARK" if lane_id == current else "DOT")
+    if not compact:
+        for lane_id, label, summary in lanes:
+            if lane_id == current:
+                box.label(text=f"{label}: {summary}")
+                break
+
+
+def _draw_readiness_checklist(layout: bpy.types.UILayout, context: bpy.types.Context, *, compact: bool = False) -> None:
+    wm = context.window_manager
+    selected_count = len(getattr(context, "selected_objects", []) or [])
+    checks = [
+        ("Login", bool(getattr(wm, "codex_blender_account", "")), getattr(wm, "codex_blender_account", "") or "Use Login / Re-login."),
+        ("Service", "stopped" not in str(getattr(wm, "codex_blender_connection", "")).lower(), getattr(wm, "codex_blender_connection", "") or "Service stopped."),
+        ("Model ready", bool(getattr(wm, "codex_blender_model_ready", False)), getattr(wm, "codex_blender_model_status", "") or "Start / Refresh Models."),
+        ("Online access", bool(getattr(bpy.app, "online_access", True)), "Blender online access is enabled." if bool(getattr(bpy.app, "online_access", True)) else "Enable Blender online access."),
+        ("Web console", bool(getattr(wm, "codex_blender_web_console_running", False)), "Running." if getattr(wm, "codex_blender_web_console_running", False) else "Optional; start when you want a larger live view."),
+        ("Scope", True, f"{getattr(wm, 'codex_blender_active_scope', 'selection')} scope, {selected_count} selected."),
+        ("Asset library", bool(len(getattr(wm, "codex_blender_asset_items", []) or [])) or bool(getattr(wm, "codex_blender_ai_assets_health", "")), getattr(wm, "codex_blender_ai_assets_health", "") or "Open Assets when ready."),
+    ]
+    box = layout.box()
+    header = box.row(align=True)
+    header.label(text="Readiness Checklist", icon="CHECKMARK")
+    header.operator("codex_blender_agent.refresh_model_state", text="Start / Refresh Models", icon="FILE_REFRESH")
+    for index, (label, ok, detail) in enumerate(checks):
+        if compact and index >= 5:
+            break
+        row = box.row(align=True)
+        row.alert = not ok and label in {"Login", "Service", "Model ready", "Online access"}
+        row.label(text=label, icon="CHECKMARK" if ok else "ERROR")
+        row.label(text=_compact_text(str(detail), 52 if compact else 80))
+
+
+def _draw_available_workflows(layout: bpy.types.UILayout, context: bpy.types.Context, *, compact: bool = False) -> None:
+    wm = context.window_manager
+    actions = list(getattr(wm, "codex_blender_workflow_actions", []) or [])
+    if not actions:
+        layout.label(text="Refresh Studio to calculate available workflows.", icon="INFO")
+        return
+    limit = 5 if compact else 9
+    for index, item in enumerate(actions):
+        if index >= limit:
+            break
+        row = layout.row(align=True)
+        row.alert = item.risk in {"high", "critical"} and item.enabled
+        button_row = row.row(align=True)
+        button_row.enabled = bool(item.enabled)
+        op = button_row.operator(item.operator or "codex_blender_agent.run_recommended_workflow", text=item.label or item.action_id, icon=_workflow_icon(item.action_id, item.risk))
+        if hasattr(op, "action_id"):
+            op.action_id = item.action_id
+        row.label(text=_compact_text(item.lane.title(), 10))
+        row.label(text=_compact_text(item.risk.title(), 10))
+        if not item.enabled and item.reason:
+            row.label(text=_compact_text(item.reason, 48 if compact else 72), icon="ERROR")
+        elif not compact and item.description:
+            row.label(text=_compact_text(item.description, 72))
+
+
+def _workflow_icon(action_id: str, risk: str) -> str:
+    if action_id == "refresh_models":
+        return "FILE_REFRESH"
+    if action_id == "explain_scene":
+        return "QUESTION"
+    if action_id in {"fix_selected", "review_with_screenshots"}:
+        return "CHECKMARK" if action_id == "fix_selected" else "CAMERA_DATA"
+    if action_id in {"make_game_asset", "save_reusable_asset"}:
+        return "ASSET_MANAGER"
+    if action_id == "generate_reference_image":
+        return "IMAGE_DATA"
+    if action_id == "recover_last_change" or risk in {"high", "critical"}:
+        return "FILE_REFRESH"
+    if action_id == "open_web_console":
+        return "URL"
+    return "TOOL_SETTINGS"
 
 
 def _draw_workflow_explainer(layout: bpy.types.UILayout, context: bpy.types.Context) -> None:
@@ -1332,16 +1441,38 @@ def _draw_game_creator_composer(layout: bpy.types.UILayout, context: bpy.types.C
     window_manager = context.window_manager
     box = layout.box()
     header = box.row(align=True)
-    header.label(text="Ask AI", icon="TEXT")
-    header.label(text=f"Mode: {getattr(window_manager, 'codex_blender_execution_friction', 'fast').title()}")
-    box.prop(window_manager, "codex_blender_prompt", text="")
-    model_row = box.row(align=True)
+    header.label(text="Setup Model + Ask AI", icon="TEXT")
+    header.label(text=f"Lane: {getattr(window_manager, 'codex_blender_current_lane', 'ask').title()}")
+    model_box = box.box()
+    model_header = model_box.row(align=True)
+    model_header.label(text="Model before prompt", icon="CHECKMARK" if getattr(window_manager, "codex_blender_model_ready", False) else "ERROR")
+    model_header.operator("codex_blender_agent.refresh_model_state", text="Start / Refresh Models", icon="FILE_REFRESH")
+    model_row = model_box.row(align=True)
     model_row.prop(window_manager, "codex_blender_model", text="Model")
     model_row.prop(window_manager, "codex_blender_effort", text="Reasoning")
+    status = getattr(window_manager, "codex_blender_model_status", "") or "Start / Refresh Models to load model choices before writing a prompt."
+    model_box.label(text=_compact_text(status, 88 if compact else 120), icon="INFO")
+    model_error = str(getattr(window_manager, "codex_blender_model_error", "") or "")
+    if model_error:
+        error = model_box.row()
+        error.alert = True
+        error.label(text=_compact_text(model_error, 88 if compact else 120), icon="ERROR")
+    if not compact:
+        _draw_inline_explanation(
+            box,
+            "What this means",
+            "Choose the model and reasoning effort before the prompt. Refreshing models starts Codex without sending any prompt.",
+            "If the list says No models loaded, click Start / Refresh Models or Login / Re-login.",
+            icon="INFO",
+        )
     if not compact:
         row = box.row(align=True)
         row.prop(window_manager, "codex_blender_target_engine", text="")
         row.prop(window_manager, "codex_blender_game_style", text="Style")
+    scope_row = box.row(align=True)
+    scope_row.label(text=f"Scope: {getattr(window_manager, 'codex_blender_active_scope', 'selection')}", icon="HIDE_OFF")
+    scope_row.label(text=f"Mode: {getattr(window_manager, 'codex_blender_execution_friction', 'fast').title()}")
+    box.prop(window_manager, "codex_blender_prompt", text="")
     prompt_actions = box.row(align=True)
     prompt_actions.operator("codex_blender_agent.expand_prompt", text="Expand Prompt", icon="FULLSCREEN_ENTER")
     row = box.row(align=True)
@@ -1376,6 +1507,20 @@ def _draw_quick_prompts(layout: bpy.types.UILayout, context: bpy.types.Context, 
     header = box.row(align=True)
     header.label(text="Quick starts", icon="LIGHT")
     header.prop(window_manager, "codex_blender_quick_prompt_category", text="")
+    practical = [
+        ("explain_scene", "Explain Scene"),
+        ("fix_selected", "Fix Selected"),
+        ("make_game_asset", "Make Game Asset"),
+        ("generate_reference_image", "Generate Reference Image"),
+        ("review_with_screenshots", "Review With Screenshots"),
+        ("save_reusable_asset", "Save As Reusable Asset"),
+        ("recover_last_change", "Recover Last Change"),
+    ]
+    for offset in range(0, len(practical), 2):
+        row = box.row(align=True)
+        for action_id, label in practical[offset : offset + 2]:
+            op = row.operator("codex_blender_agent.run_recommended_workflow", text=label, icon=_workflow_icon(action_id, "low"))
+            op.action_id = action_id
     prompts = list_quick_prompts(window_manager.codex_blender_quick_prompt_category)
     if not prompts:
         box.label(text="No quick prompts in this group.")
@@ -1394,7 +1539,15 @@ def _draw_current_task_summary(layout: bpy.types.UILayout, context: bpy.types.Co
     window_manager = context.window_manager
     _draw_automation_status_panel(layout, context)
     box = layout.box()
-    box.label(text="Current task", icon="TIME" if window_manager.codex_blender_pending else "INFO")
+    box.label(text="AI Flight Recorder", icon="TIME" if window_manager.codex_blender_pending else "INFO")
+    box.label(text=f"Current step: {getattr(window_manager, 'codex_blender_current_lane', 'ask').title()}")
+    if len(getattr(window_manager, "codex_blender_active_tool_events", [])):
+        event = window_manager.codex_blender_active_tool_events[0]
+        box.label(text=f"Active tool: {_compact_text(event.tool_name or event.lifecycle_id or 'tool', 72)}", icon="PLAY")
+        box.label(text=f"Why: {_compact_text(event.summary or 'Codex requested this tool for the current turn.', 96)}")
+        box.label(text=f"Can affect: {_compact_text(event.category or event.risk or 'read-only state', 64)}")
+        box.label(text=f"Elapsed: {event.duration_seconds:.2f}s")
+        box.label(text="Next expected step: tool result appears here, then a receipt, screenshot review, or assistant response.")
     if window_manager.codex_blender_pending:
         box.label(text=_compact_text(window_manager.codex_blender_activity or "AI is working.", 92))
         box.operator("codex_blender_agent.stop_turn", text="Stop", icon="CANCEL")
@@ -1419,6 +1572,8 @@ def _draw_launcher_ui(layout: bpy.types.UILayout, context: bpy.types.Context) ->
     box = layout.box()
     box.label(text="Codex Game Creator", icon="LIGHT")
     _draw_orientation_strip(box, context, "launcher", compact=True)
+    _draw_command_lanes(layout, context, compact=True)
+    _draw_readiness_checklist(layout, context, compact=True)
     _draw_login_status_card(layout, window_manager, compact=True)
     _draw_install_and_web_console_status(layout, context, compact=True)
     _draw_game_creator_composer(layout, context, compact=True)
@@ -1447,6 +1602,8 @@ def _draw_launcher_ui(layout: bpy.types.UILayout, context: bpy.types.Context) ->
 def _draw_dashboard_home(layout: bpy.types.UILayout, context: bpy.types.Context) -> None:
     window_manager = context.window_manager
     _draw_orientation_strip(layout, context, "studio")
+    _draw_command_lanes(layout, context)
+    _draw_readiness_checklist(layout, context)
     _draw_login_status_card(layout, window_manager)
     _draw_install_and_web_console_status(layout, context)
     _draw_game_creator_composer(layout, context)
